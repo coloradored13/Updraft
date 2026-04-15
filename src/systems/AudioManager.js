@@ -46,6 +46,10 @@ export default class AudioManager {
     this._titleAmbient = null;
     /** @private Whether thermal calm boost is active */
     this._thermalCalm = false;
+    /** @private Set of altitude milestones where layers have been unlocked */
+    this._altitudeLayersUnlocked = new Set();
+    /** @private Altitude layer gain nodes */
+    this._altitudeLayerGains = [];
   }
 
   /**
@@ -619,9 +623,44 @@ export default class AudioManager {
    */
   onWindMiss() {
     if (!this._started) return;
-    this._musicIntensity = Math.max(this._musicIntensity - 0.06, 0.0);
+    this._musicIntensity = Math.max(this._musicIntensity - 0.06, 0.08);
     this._intensityDirection = 'down';
     this._updateLayerVolumes();
+  }
+
+  /**
+   * Called each frame with current altitude. Unlocks ambient harmonic layers
+   * at 2000m, 4000m, and 6000m that persist regardless of catch performance.
+   * @param {number} altitudeMeters - Current altitude
+   */
+  updateAltitude(altitudeMeters) {
+    if (!this._started || !this._reverb) return;
+
+    const milestones = [2000, 4000, 6000];
+    // Pentatonic notes for gentle harmonic pads
+    const notes = ['E3', 'A3', 'C4'];
+
+    for (let i = 0; i < milestones.length; i++) {
+      if (altitudeMeters >= milestones[i] && !this._altitudeLayersUnlocked.has(milestones[i])) {
+        this._altitudeLayersUnlocked.add(milestones[i]);
+
+        // Create a gentle harmonic pad that fades in and persists
+        const gain = new Tone.Gain(0).connect(this._reverb);
+        const synth = new Tone.Synth({
+          oscillator: { type: 'sine' },
+          envelope: { attack: 3, decay: 2, sustain: 0.3, release: 4 },
+          volume: -22,
+        }).connect(gain);
+
+        // Fade in the layer over 3 seconds
+        gain.gain.rampTo(AUDIO.MUSIC_VOLUME * AUDIO.MASTER_VOLUME * 0.25, 3);
+
+        // Play a sustained note
+        synth.triggerAttack(notes[i]);
+
+        this._altitudeLayerGains.push({ gain, synth });
+      }
+    }
   }
 
   /**

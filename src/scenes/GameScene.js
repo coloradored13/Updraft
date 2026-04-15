@@ -16,6 +16,7 @@ import {
   UI, VISUAL, DIFFICULTY, OBSTACLES, LEVELS, THERMAL, WONDER,
 } from '../utils/constants.js';
 import { pixelsToMeters, randomRange, randomInt, lerpColor, clamp } from '../utils/helpers.js';
+import { trackGameStart, trackGameOver, trackVictory } from '../utils/analytics.js';
 
 /**
  * GameScene - Core gameplay scene.
@@ -118,15 +119,17 @@ export default class GameScene extends Phaser.Scene {
     /** @type {number} Current camera offset Y (lerps toward target) */
     this._cameraOffsetY = height * 0.25;
 
-    // ── Yeti easter egg (Ski Free homage) ─────────────────────────────
-    /** @type {number} Wind catches after 5000m (tracked for yeti gate) */
-    this._yetiCatches = 0;
-    /** @type {number} Wind misses after 5000m */
-    this._yetiMisses = 0;
-    /** @type {boolean} Whether the yeti has been triggered this run */
+    // ── Yeti friend (appears at 8000m+ as a friendly companion) ───────
+    /** @type {boolean} Whether the yeti friend has appeared this run */
     this._yetiTriggered = false;
     /** @type {Phaser.GameObjects.Container|null} The yeti sprite container */
     this._yetiSprite = null;
+
+    // ── Session arc state ───────────────────────────────────────────
+    /** @type {boolean} Whether the session arc has been triggered this run */
+    this._sessionArcTriggered = false;
+    /** @type {boolean} Whether the soft close descent is in progress */
+    this._softClosing = false;
 
 
 // ── Wonder moments state ──────────────────────────────────────────
@@ -157,23 +160,22 @@ export default class GameScene extends Phaser.Scene {
     this.hudBacking.fillStyle(0x000000, 0.15);
     this.hudBacking.fillRoundedRect(width / 2 - 70, 6, 140, 38, 8);
 
-    // Altitude counter: top-center, the one number that matters
-    this.altitudeText = this.add.text(width / 2, UI.HUD_PADDING, '0m', {
+    // Phase name: top-center, replaces numeric altitude display
+    this.altitudeText = this.add.text(width / 2, UI.HUD_PADDING, 'Dawn', {
       fontFamily: UI.FONT_FAMILY,
-      fontSize: `${UI.SCORE_FONT_SIZE}px`,
+      fontSize: `${UI.SCORE_FONT_SIZE - 4}px`,
       color: UI.COLORS.TEXT_PRIMARY,
       fontStyle: 'bold',
       shadow: { offsetX: 1, offsetY: 1, color: UI.COLORS.TEXT_SHADOW, blur: 2, fill: true },
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
 
-    // Streak counter: below the HUD backing, shown on catch
-    this.streakText = this.add.text(width / 2, UI.HUD_PADDING + 42, '', {
+    // Small altitude number beneath phase name, low opacity
+    this.altitudeSubText = this.add.text(width / 2, UI.HUD_PADDING + 26, '0m', {
       fontFamily: UI.FONT_FAMILY,
-      fontSize: '16px',
-      color: UI.COLORS.ACCENT,
-      fontStyle: 'bold',
+      fontSize: '13px',
+      color: UI.COLORS.TEXT_PRIMARY,
       shadow: { offsetX: 1, offsetY: 1, color: UI.COLORS.TEXT_SHADOW, blur: 2, fill: true },
-    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100);
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100).setAlpha(0.3);
 
     // Level indicator: top-left, small
     this.levelText = this.add.text(UI.HUD_PADDING, UI.HUD_PADDING, 'Lv 1', {
@@ -221,6 +223,9 @@ export default class GameScene extends Phaser.Scene {
 
       this.scoreManager.markFirstPlayDone();
     }
+
+    // ── Analytics ──────────────────────────────────────────────────────
+    trackGameStart();
 
     // ── Audio init on first interaction ──────────────────────────────────
     this._audioInitialized = this.audioManager._started;
@@ -354,8 +359,11 @@ export default class GameScene extends Phaser.Scene {
     // ── Victory detection ──────────────────────────────────────────────
     try { this._checkVictory(); } catch (e) { console.warn('victory:', e.message); }
 
-    // ── Yeti check (Ski Free easter egg) ────────────────────────────
-    try { this._checkYeti(); } catch (e) { console.warn('yeti:', e.message); }
+    // ── Yeti friend check ────────────────────────────────────────────
+    try { this._checkYetiFriend(); } catch (e) { console.warn('yeti:', e.message); }
+
+    // ── Session arc check ──────────────────────────────────────────────
+    try { this._checkSessionArc(); } catch (e) { console.warn('sessionArc:', e.message); }
 
     // ── Level-up detection ──────────────────────────────────────────────
     try { this._checkLevelUp(); } catch (e) { console.warn('levelUp:', e.message); }
@@ -529,7 +537,6 @@ export default class GameScene extends Phaser.Scene {
           // Caught!
           wc.catch();
           this._performanceRating = Math.min(this._performanceRating + 0.06, 1.0);
-          if (this.altitudeMeters >= 5000) this._yetiCatches++;
 
           // First catch of the run: special takeoff feel
           if (!this._firstCatchDone) {
@@ -553,7 +560,6 @@ export default class GameScene extends Phaser.Scene {
       if (wc.active && wc.hasBeenPassedBy(airplaneY)) {
         wc.miss();
         this._performanceRating = Math.max(this._performanceRating - 0.1, 0.0);
-        if (this.altitudeMeters >= 5000) this._yetiMisses++;
         // Apply penalty gradually over 400ms — the wind just dies down naturally
         this._applyGradualPenalty(AIRPLANE.MISS_PENALTY, 400);
         this.scoreManager.onWindMiss();
@@ -587,17 +593,7 @@ export default class GameScene extends Phaser.Scene {
       this.juice.streakRing(this.airplane.x, this.airplane.y, result.milestoneType);
     }
 
-    // Streak notification
-    if (result.streak > 1) {
-      this.streakText.setText(`${result.streak}x streak!`);
-      this.streakText.setAlpha(1);
-      this.tweens.add({
-        targets: this.streakText,
-        alpha: 0,
-        delay: 800,
-        duration: 400,
-      });
-    }
+    // Streak moved to end-of-flight summary
 
     // Milestone flash
     if (result.isMilestone) {
@@ -635,6 +631,9 @@ export default class GameScene extends Phaser.Scene {
 
     // Wind pitch tracks airplane speed
     this.audioManager.setWindPitch(this.airplane.riseSpeed, PHYSICS.MAX_RISE_SPEED);
+
+    // Altitude-locked ambient layers
+    this.audioManager.updateAltitude(this.altitudeMeters);
 
     // Crossfade music when sky phase changes + phase transition wash
     const phase = this.audioManager.getPhaseForAltitude(this.altitudeMeters);
@@ -890,9 +889,9 @@ export default class GameScene extends Phaser.Scene {
       this.vignetteGraphics.setAlpha(Math.min(this.vignetteGraphics.alpha + 0.08, 0.5));
       this.vignetteGraphics.clear();
       const { width, height } = this.scale;
-      this.vignetteGraphics.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.7, 0.7, 0, 0);
+      this.vignetteGraphics.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.35, 0.35, 0, 0);
       this.vignetteGraphics.fillRect(0, 0, width, height * 0.3);
-      this.vignetteGraphics.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.7, 0.7);
+      this.vignetteGraphics.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0, 0, 0.35, 0.35);
       this.vignetteGraphics.fillRect(0, height * 0.7, width, height * 0.3);
     } else {
       this.vignetteGraphics.setAlpha(Math.max(this.vignetteGraphics.alpha - 0.05, 0));
@@ -1120,7 +1119,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   _updateHUD() {
-    this.altitudeText.setText(`${this.altitudeMeters}m`);
+    // Show phase name as primary HUD, altitude as subtle sub-text
+    this.altitudeText.setText(this.scoreManager.levelName);
+    this.altitudeSubText.setText(`${this.altitudeMeters}m`);
     this.scoreManager.addAltitudeScore(this.altitudeMeters);
     this.levelText.setText(`Lv ${this.scoreManager.level}`);
 
@@ -1549,70 +1550,57 @@ export default class GameScene extends Phaser.Scene {
     this._wonderElements.push(text);
   }
 
-  // ── Yeti (Ski Free easter egg) ───────────────────────────────────────
+  // ── Yeti Friend (reframed from Ski Free easter egg) ─────────────────
 
   /**
-   * Check if the player is coasting on the easy route.
-   * Continuously checked from 8000m to 10000m.
-   * Tracks catch rate since 5000m — need 60% to avoid the yeti.
-   * Homage to the Ski Free yeti — you can't just coast to the summit.
+   * At 8000m+, spawn the yeti as a friendly companion that floats alongside.
+   * No collision, no game-over trigger — just a cheerful presence.
    * @private
    */
-  _checkYeti() {
+  _checkYetiFriend() {
     if (this._yetiTriggered || this.altitudeMeters < 8000) return;
 
-    const totalGates = this._yetiCatches + this._yetiMisses;
-    if (totalGates < 8) return; // need a meaningful sample
-
-    const catchRate = this._yetiCatches / totalGates;
-    if (catchRate >= 0.6) return; // playing well enough — no yeti
-
     this._yetiTriggered = true;
-    this._spawnYeti();
+    this._spawnYetiFriend();
   }
 
   /**
-   * Spawn the yeti: a white pixelated figure that rushes up from below.
-   * Draws a simple Ski Free-style yeti using graphics.
+   * Spawn the yeti as a friendly companion that drifts beside the airplane.
+   * Preserves the original pixel art but reframes the encounter.
    * @private
    */
-  _spawnYeti() {
+  _spawnYetiFriend() {
     const { width, height } = this.scale;
     const airplaneWorldY = this.airplane.y;
 
-    // Create yeti as a container with graphics
-    const container = this.add.container(width / 2, airplaneWorldY + height * 0.8);
+    // Create yeti as a container with graphics — appears from the side, not below
+    const fromLeft = Math.random() > 0.5;
+    const startX = fromLeft ? -60 : width + 60;
+    const container = this.add.container(startX, airplaneWorldY);
     container.setDepth(95);
 
     const g = this.add.graphics();
     const px = 3; // pixel size for retro look
 
-    // Classic SkiFree yeti — grey, stocky, arms raised, big open mouth
-    // Drawn as blocky pixel art on a ~14x18 pixel grid scaled up by px
+    // Same pixel art — but softer colors for friendly feel
+    const fur = 0xB0B8C0;
+    const darkFur = 0x90A0A8;
+    const white = 0xE8ECF0;
 
-    // Fur color
-    const fur = 0xA0A0A0;
-    const darkFur = 0x808080;
-    const white = 0xE0E0E0;
-
-    // Helper to draw a "pixel" block
     const dot = (x, y, color = fur) => {
       g.fillStyle(color, 1);
       g.fillRect(x * px, y * px, px, px);
     };
 
-    // Offset so the yeti is centered (grid is roughly -7..7 x, -18..0 y)
-    // Feet at y=0, head at y=-18
-
     // Legs (wide stance)
-    dot(-3, -1, darkFur); dot(-2, -1, darkFur); // left foot
-    dot(2, -1, darkFur); dot(3, -1, darkFur);   // right foot
-    dot(-3, -2, fur); dot(-2, -2, fur);          // left shin
-    dot(2, -2, fur); dot(3, -2, fur);            // right shin
-    dot(-3, -3, fur); dot(-2, -3, fur);          // left knee
-    dot(2, -3, fur); dot(3, -3, fur);            // right knee
+    dot(-3, -1, darkFur); dot(-2, -1, darkFur);
+    dot(2, -1, darkFur); dot(3, -1, darkFur);
+    dot(-3, -2, fur); dot(-2, -2, fur);
+    dot(2, -2, fur); dot(3, -2, fur);
+    dot(-3, -3, fur); dot(-2, -3, fur);
+    dot(2, -3, fur); dot(3, -3, fur);
 
-    // Torso (wide, blocky)
+    // Torso
     for (let y = -4; y >= -10; y--) {
       for (let x = -4; x <= 4; x++) {
         dot(x, y, fur);
@@ -1625,102 +1613,229 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // Head (slightly narrower)
+    // Head
     for (let y = -11; y >= -15; y--) {
       for (let x = -3; x <= 3; x++) {
         dot(x, y, fur);
       }
     }
-    // Top of head (rounded)
     dot(-2, -16, fur); dot(-1, -16, fur); dot(0, -16, fur); dot(1, -16, fur); dot(2, -16, fur);
     dot(-1, -17, fur); dot(0, -17, fur); dot(1, -17, fur);
 
-    // Eyes — small, dark, menacing
-    dot(-2, -14, 0x111111); dot(2, -14, 0x111111);
+    // Eyes — friendly, dark dots
+    dot(-2, -14, 0x222222); dot(2, -14, 0x222222);
 
-    // Mouth — wide open, dark
-    dot(-2, -12, 0x220000); dot(-1, -12, 0x330000); dot(0, -12, 0x330000);
-    dot(1, -12, 0x330000); dot(2, -12, 0x220000);
-    dot(-1, -11, 0x440000); dot(0, -11, 0x440000); dot(1, -11, 0x440000);
+    // Smile instead of open mouth
+    dot(-2, -12, 0x665555); dot(-1, -12, 0x665555); dot(0, -12, 0x665555);
+    dot(1, -12, 0x665555); dot(2, -12, 0x665555);
 
-    // Teeth
-    dot(-1, -12, 0xFFFFFF); dot(1, -12, 0xFFFFFF);
-
-    // Arms — raised up and out (classic menacing pose)
-    // Left arm going up-left
+    // Arms — waving pose (one up, one down)
+    // Left arm waving up
     dot(-5, -9, fur); dot(-6, -10, fur); dot(-7, -11, fur);
     dot(-7, -12, fur); dot(-7, -13, fur); dot(-7, -14, fur);
-    // Left hand/claws
     dot(-8, -15, darkFur); dot(-7, -15, darkFur); dot(-6, -15, darkFur);
 
-    // Right arm going up-right
-    dot(5, -9, fur); dot(6, -10, fur); dot(7, -11, fur);
-    dot(7, -12, fur); dot(7, -13, fur); dot(7, -14, fur);
-    // Right hand/claws
-    dot(8, -15, darkFur); dot(7, -15, darkFur); dot(6, -15, darkFur);
+    // Right arm relaxed down
+    dot(5, -8, fur); dot(6, -7, fur); dot(7, -6, fur);
+    dot(7, -5, fur);
+    dot(8, -4, darkFur); dot(7, -4, darkFur);
 
     container.add(g);
     this._yetiSprite = container;
 
-    // Warning: screen shakes subtly
-    this.cameras.main.shake(300, 0.005);
+    // Drift in gently from the side to beside the airplane
+    const companionX = fromLeft
+      ? this.airplane.x - 60
+      : this.airplane.x + 60;
 
-    // Rush toward the airplane over 3 seconds
     this.tweens.add({
       targets: container,
-      x: this.airplane.x,
-      y: this.airplane.y,
-      duration: 3000,
-      ease: 'Quad.easeIn',
-      onUpdate: () => {
-        // Track airplane position as it moves
-        container.x += (this.airplane.x - container.x) * 0.02;
-      },
-      onComplete: () => {
-        this._onYetiCatch();
-      },
+      x: companionX,
+      y: this.airplane.y - 20,
+      duration: 2000,
+      ease: 'Sine.easeOut',
     });
 
-    // Yeti grows slightly as it approaches (perspective)
+    // Gentle bobbing once in position
+    this.time.delayedCall(2000, () => {
+      if (!container.active) return;
+      this.tweens.add({
+        targets: container,
+        y: container.y - 8,
+        duration: 1500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      // Follow the airplane's Y loosely
+      this.time.addEvent({
+        delay: 100,
+        loop: true,
+        callback: () => {
+          if (!container.active || this.gameOver) return;
+          container.y += (this.airplane.y - 20 - container.y) * 0.03;
+        },
+      });
+    });
+  }
+
+  // ── Session Arc ────────────────────────────────────────────────────
+
+  /**
+   * At 5000m, trigger a designed golden-hour arc:
+   * distance marker → reduced difficulty → choice to land or fly on.
+   * @private
+   */
+  _checkSessionArc() {
+    if (this._sessionArcTriggered || this._softClosing || this.altitudeMeters < 5000) return;
+    this._sessionArcTriggered = true;
+
+    const { width, height } = this.scale;
+
+    // Distance marker
+    const markerText = this.add.text(width / 2, height * 0.3,
+      'The light is turning gold.\nYou could rest here.', {
+        fontFamily: UI.FONT_FAMILY,
+        fontSize: '17px',
+        color: UI.COLORS.TEXT_PRIMARY,
+        fontStyle: 'italic',
+        align: 'center',
+        shadow: { offsetX: 0, offsetY: 0, color: '#D4A76A88', blur: 10, fill: true },
+      }
+    ).setOrigin(0.5).setScrollFactor(0).setDepth(102).setAlpha(0);
+
     this.tweens.add({
-      targets: container,
-      scaleX: 1.4,
-      scaleY: 1.4,
-      duration: 3000,
-      ease: 'Quad.easeIn',
+      targets: markerText,
+      alpha: 0.8,
+      duration: 800,
+      ease: 'Sine.easeIn',
+    });
+
+    // Fade out the marker after a few seconds
+    this.tweens.add({
+      targets: markerText,
+      alpha: 0,
+      delay: 4000,
+      duration: 600,
+      ease: 'Sine.easeOut',
+      onComplete: () => markerText.destroy(),
+    });
+
+    // After 500m more (~5500m), show the gentle choice
+    const checkChoice = () => {
+      if (this.gameOver || this._softClosing) return;
+      if (this.altitudeMeters >= 5500) {
+        this._showSessionArcChoice();
+      } else {
+        this.time.delayedCall(200, checkChoice);
+      }
+    };
+    this.time.delayedCall(1000, checkChoice);
+  }
+
+  /**
+   * Show the "Fly on" / "Land gently" choice overlay.
+   * @private
+   */
+  _showSessionArcChoice() {
+    const { width, height } = this.scale;
+
+    const choiceBg = this.add.graphics().setScrollFactor(0).setDepth(110);
+    choiceBg.fillStyle(0x000000, 0.3);
+    choiceBg.fillRect(0, height * 0.35, width, height * 0.22);
+
+    const flyOnText = this.add.text(width / 2, height * 0.41, 'Fly on', {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '20px',
+      color: UI.COLORS.TEXT_PRIMARY,
+      fontStyle: 'bold',
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000066', blur: 3, fill: true },
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(111).setAlpha(0)
+      .setInteractive({ useHandCursor: true });
+
+    const landText = this.add.text(width / 2, height * 0.50, 'Land gently', {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '17px',
+      color: '#D4A76A',
+      fontStyle: 'italic',
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000044', blur: 2, fill: true },
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(111).setAlpha(0)
+      .setInteractive({ useHandCursor: true });
+
+    // Fade in
+    this.tweens.add({ targets: [flyOnText, landText, choiceBg], alpha: { from: 0, to: 1 }, duration: 500 });
+    this.tweens.add({ targets: flyOnText, alpha: 1, duration: 500 });
+    this.tweens.add({ targets: landText, alpha: 0.8, duration: 500 });
+
+    const dismiss = () => {
+      flyOnText.removeInteractive();
+      landText.removeInteractive();
+      this.tweens.add({
+        targets: [flyOnText, landText, choiceBg],
+        alpha: 0,
+        duration: 400,
+        onComplete: () => {
+          flyOnText.destroy();
+          landText.destroy();
+          choiceBg.destroy();
+        },
+      });
+    };
+
+    flyOnText.on('pointerdown', (pointer) => {
+      pointer.event.stopPropagation();
+      dismiss();
+    });
+
+    landText.on('pointerdown', (pointer) => {
+      pointer.event.stopPropagation();
+      dismiss();
+      this._startSoftClose();
+    });
+
+    // Auto-dismiss after 6 seconds if no choice made (player keeps flying)
+    this.time.delayedCall(6000, () => {
+      if (flyOnText.active) dismiss();
     });
   }
 
   /**
-   * The yeti catches the airplane — special game over.
+   * Graceful descent: airplane slowly drifts down, trails expand, then transition.
    * @private
    */
-  _onYetiCatch() {
+  _startSoftClose() {
+    if (this._softClosing || this.gameOver) return;
+    this._softClosing = true;
     this.gameOver = true;
 
-    // Grab animation: yeti and airplane pulled down together
-    this.cameras.main.shake(500, 0.01);
+    // Gentle music fadeout
+    this.audioManager.softFadeOut(3);
 
-    // Music cuts
-    this.audioManager.softFadeOut(1);
-
-    // Pull airplane down with the yeti
+    // Airplane slowly drifts down
     this.tweens.add({
-      targets: [this.airplane, this._yetiSprite],
-      y: `+=${this.scale.height * 0.5}`,
-      alpha: 0,
-      duration: 1500,
-      ease: 'Back.easeIn',
+      targets: this.airplane,
+      y: this.airplane.y + this.scale.height * 0.3,
+      duration: 3000,
+      ease: 'Sine.easeInOut',
     });
 
-    // Fade to black
-    this.time.delayedCall(1200, () => {
-      this.cameras.main.fadeOut(400, 0, 0, 0);
+    // Airplane gently fades
+    this.tweens.add({
+      targets: this.airplane,
+      alpha: 0.3,
+      duration: 3000,
+      ease: 'Sine.easeIn',
     });
 
-    // Transition to game over with yeti flag
-    this.time.delayedCall(1800, () => {
+    // Fade to warm golden
+    this.time.delayedCall(2000, () => {
+      this.cameras.main.fadeOut(1200, 212, 167, 106);
+    });
+
+    // Transition to game over with softClose flag
+    this.time.delayedCall(3500, () => {
       ScoreManager.recordCrashAltitude(this.altitudeMeters);
+      trackGameOver(this.altitudeMeters);
       const results = this.scoreManager.getResults();
       this.scene.start('GameOverScene', {
         score: results.score,
@@ -1730,7 +1845,10 @@ export default class GameScene extends Phaser.Scene {
         personalBest: results.personalBest,
         level: results.level,
         levelName: results.levelName,
-        yetiCaught: true,
+        flightCount: results.flightCount,
+        totalCatches: results.totalCatches,
+        totalMisses: results.totalMisses,
+        softClose: true,
       });
     });
   }
@@ -1792,6 +1910,7 @@ export default class GameScene extends Phaser.Scene {
 
     // Transition to VictoryScene
     this.time.delayedCall(4200, () => {
+      trackVictory(this.altitudeMeters);
       const results = this.scoreManager.getResults();
       this.scene.start('VictoryScene', {
         altitude: this.altitudeMeters,

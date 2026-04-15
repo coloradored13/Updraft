@@ -1,0 +1,11 @@
+# Cloudflare Pages configuration for Updraft
+# See: https://developers.cloudflare.com/pages/
+
+name = "updraft"
+compatibility_date = "2025-01-01"
+
+[site]
+bucket = "./dist"
+
+# Pages-specific settings are configured via the Cloudflare dashboard.
+# This file is used if deploying via `wrangler pages deploy`.

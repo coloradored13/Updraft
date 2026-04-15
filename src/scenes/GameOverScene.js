@@ -8,14 +8,7 @@ const CLOSING_LINES = [
   'See you next flight.',
   'Higher next time.',
   'Every flight counts.',
-];
-
-// Yeti-specific lines (Ski Free easter egg)
-const YETI_LINES = [
-  'You can\'t coast to the summit.',
-  'The yeti always catches the lazy ones.',
-  'Try catching more wind currents next time.',
-  'No shortcuts to the stars.',
+  'Even the yeti cheered you on.',
 ];
 
 // Gentle guidance for players struggling at low altitude — not tutorials, just quiet hints
@@ -26,8 +19,61 @@ const STRUGGLE_HINTS = [
 ];
 
 /**
+ * Flight personality categories — keyed by flight style.
+ * Each maps to a set of possible lines.
+ */
+const PERSONALITY_LINES = {
+  graceful: [
+    'You read the wind like a love letter.',
+    'Every current found you waiting.',
+    'The sky opened up for you.',
+  ],
+  flow: [
+    '{streak} currents in a row. You found the rhythm.',
+    'You caught the flow and held on.',
+    'That streak was something special.',
+  ],
+  wanderer: [
+    'You took the scenic route. Nothing wrong with that.',
+    'Not every path is a straight line.',
+    'The view from the long way round is just as good.',
+  ],
+  adventurer: [
+    'You zigged. You zagged. You climbed anyway.',
+    'An unpredictable flight. The best kind.',
+    'You kept the wind guessing.',
+  ],
+  newcomer: [
+    'Your first flight. The sky will remember.',
+    'Welcome to the wind.',
+    'The first time is always the hardest.',
+  ],
+  regular: [
+    'Flight #{count}. The wind knows your name.',
+    'You keep coming back. The sky notices.',
+    'Another flight, another story.',
+  ],
+  brief: [
+    'A short flight is still a flight.',
+    'Sometimes you just need a moment of sky.',
+    'Brief, but the wind was there.',
+  ],
+  endurance: [
+    'The twilight kept you, didn\'t it?',
+    'You flew further than most dare.',
+    'The thin air suits you.',
+  ],
+  softClose: [
+    'You chose when to land. That\'s its own kind of grace.',
+    'Landing on your own terms. Quietly perfect.',
+    'The golden light was a good place to rest.',
+  ],
+};
+
+/**
  * GameOverScene - Displays final results with warm, encouraging messaging.
- * Leads with the level/phase name as hero text, numbers are secondary.
+ * Leads with the level/phase name as hero text, flight personality as secondary.
+ * Numbers are de-emphasized. Pacing creates a breath moment.
  */
 export default class GameOverScene extends Phaser.Scene {
   constructor() {
@@ -35,7 +81,7 @@ export default class GameOverScene extends Phaser.Scene {
   }
 
   /**
-   * @param {{ score: number, altitude: number, streak: number, isNewHighScore: boolean, personalBest: number, level: number, levelName: string, flightCount: number, yetiCaught?: boolean }} data
+   * @param {{ score: number, altitude: number, streak: number, isNewHighScore: boolean, personalBest: number, level: number, levelName: string, flightCount: number, totalCatches?: number, totalMisses?: number, softClose?: boolean }} data
    */
   create(data) {
     const { width, height } = this.scale;
@@ -47,9 +93,11 @@ export default class GameOverScene extends Phaser.Scene {
     const level = data?.level ?? 1;
     const levelName = data?.levelName ?? 'Dawn';
     const flightCount = data?.flightCount ?? ScoreManager.getFlightCount();
-    const yetiCaught = data?.yetiCaught ?? false;
+    const totalCatches = data?.totalCatches ?? 0;
+    const totalMisses = data?.totalMisses ?? 0;
+    const softClose = data?.softClose ?? false;
 
-    // Sky journey gradient background — shows all phases from dawn (bottom) to night (top)
+    // Sky journey gradient background
     const bg = this.add.graphics();
     const phases = VISUAL.SKY_PHASES;
     const bandCount = phases.length;
@@ -76,14 +124,14 @@ export default class GameOverScene extends Phaser.Scene {
     // Fade in
     this.cameras.main.fadeIn(UI.SCENE_FADE_DURATION_MS);
 
-    // Hero text: level/phase name as the big headline (or yeti message)
-    const heroMessage = yetiCaught
-      ? 'The Yeti got you!'
-      : `You reached the ${levelName}`;
+    // ── Pacing: 800ms silence → personality fades in → closing line → tap prompt ──
+
+    // Hero text: level/phase name (always visible)
+    const heroMessage = `You reached the ${levelName}`;
     const heroText = this.add.text(width / 2, height * 0.22, heroMessage, {
       fontFamily: UI.FONT_FAMILY,
       fontSize: `${UI.GAME_OVER_FONT_SIZE}px`,
-      color: yetiCaught ? '#CCDDFF' : UI.COLORS.TEXT_PRIMARY,
+      color: UI.COLORS.TEXT_PRIMARY,
       fontStyle: 'bold',
       align: 'center',
       wordWrap: { width: width * 0.8 },
@@ -97,42 +145,82 @@ export default class GameOverScene extends Phaser.Scene {
       ease: 'Power2',
     });
 
-    // Altitude reached (smaller, secondary)
-    const altText = this.add.text(width / 2, height * 0.38, `${altitude}m`, {
-      fontFamily: UI.FONT_FAMILY,
-      fontSize: `${UI.SCORE_FONT_SIZE}px`,
-      color: UI.COLORS.ACCENT,
-      fontStyle: 'bold',
-      shadow: { offsetX: 1, offsetY: 1, color: '#00000044', blur: 2, fill: true },
-    }).setOrigin(0.5).setAlpha(0).setScale(0.5);
-
-    this.tweens.add({
-      targets: altText,
-      alpha: 1,
-      scaleX: 1,
-      scaleY: 1,
-      duration: 500,
-      delay: 200,
-      ease: 'Back.easeOut',
+    // Flight personality line — the secondary hero text
+    const personalityLine = this._getFlightPersonality({
+      totalCatches, totalMisses, streak, altitude, flightCount, softClose,
     });
 
-    this.add.text(width / 2, height * 0.43, 'altitude reached', {
+    const personalityText = this.add.text(width / 2, height * 0.34, personalityLine, {
       fontFamily: UI.FONT_FAMILY,
-      fontSize: '13px',
+      fontSize: '17px',
       color: UI.COLORS.TEXT_PRIMARY,
-    }).setOrigin(0.5).setAlpha(0.5);
+      fontStyle: 'italic',
+      align: 'center',
+      wordWrap: { width: width * 0.75 },
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000044', blur: 3, fill: true },
+    }).setOrigin(0.5).setAlpha(0);
 
-    // Streak - smaller, below
+    // Personality line fades in after 800ms silence
+    this.tweens.add({
+      targets: personalityText,
+      alpha: 0.85,
+      duration: 600,
+      delay: 800,
+      ease: 'Sine.easeIn',
+    });
+
+    // Altitude and streak — smaller, lower-opacity, below personality
+    const statsY = height * 0.44;
+    const altStatText = this.add.text(width / 2, statsY, `${altitude}m reached`, {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '14px',
+      color: UI.COLORS.TEXT_PRIMARY,
+    }).setOrigin(0.5).setAlpha(0);
+
+    this.tweens.add({
+      targets: altStatText,
+      alpha: 0.4,
+      duration: 400,
+      delay: 1200,
+      ease: 'Sine.easeIn',
+    });
+
     if (streak > 0) {
-      this.add.text(width / 2, height * 0.49, `Best Streak: ${streak}`, {
+      const streakStatText = this.add.text(width / 2, statsY + 20, `Best Streak: ${streak}`, {
         fontFamily: UI.FONT_FAMILY,
-        fontSize: `${UI.HUD_FONT_SIZE - 4}px`,
+        fontSize: '13px',
         color: UI.COLORS.TEXT_PRIMARY,
-      }).setOrigin(0.5).setAlpha(0.6);
+      }).setOrigin(0.5).setAlpha(0);
+
+      this.tweens.add({
+        targets: streakStatText,
+        alpha: 0.35,
+        duration: 400,
+        delay: 1300,
+        ease: 'Sine.easeIn',
+      });
     }
 
-    // Personal best / New high score - warmer phrasing
-    const bestY = height * 0.58;
+    // Total altitude across all flights
+    const totalAltitude = ScoreManager.getTotalAltitude();
+    if (totalAltitude > 0) {
+      const totalAltText = this.add.text(width / 2, statsY + 42, `${totalAltitude}m flown across all flights`, {
+        fontFamily: UI.FONT_FAMILY,
+        fontSize: '12px',
+        color: UI.COLORS.TEXT_PRIMARY,
+      }).setOrigin(0.5).setAlpha(0);
+
+      this.tweens.add({
+        targets: totalAltText,
+        alpha: 0.3,
+        duration: 400,
+        delay: 1400,
+        ease: 'Sine.easeIn',
+      });
+    }
+
+    // Personal best / New high score
+    const bestY = height * 0.56;
     if (isNewHighScore) {
       const newLabel = this.add.text(width / 2, bestY, 'A new personal best!', {
         fontFamily: UI.FONT_FAMILY,
@@ -140,68 +228,80 @@ export default class GameOverScene extends Phaser.Scene {
         color: UI.COLORS.ACCENT,
         fontStyle: 'bold',
         shadow: { offsetX: 1, offsetY: 1, color: '#00000066', blur: 3, fill: true },
-      }).setOrigin(0.5);
+      }).setOrigin(0.5).setAlpha(0);
+
+      this.tweens.add({
+        targets: newLabel,
+        alpha: 1,
+        duration: 500,
+        delay: 1500,
+        ease: 'Power2',
+      });
 
       this.tweens.add({
         targets: newLabel,
         scaleX: 1.05,
         scaleY: 1.05,
         duration: 800,
+        delay: 2000,
         yoyo: true,
         repeat: -1,
         ease: 'Sine.easeInOut',
       });
     } else if (personalBest > 0) {
-      this.add.text(width / 2, bestY, `Your best: ${personalBest}m`, {
+      const bestLabel = this.add.text(width / 2, bestY, `Your best: ${personalBest}m`, {
         fontFamily: UI.FONT_FAMILY,
         fontSize: '15px',
         color: UI.COLORS.TEXT_PRIMARY,
-      }).setOrigin(0.5).setAlpha(0.5);
+      }).setOrigin(0.5).setAlpha(0);
+
+      this.tweens.add({
+        targets: bestLabel,
+        alpha: 0.5,
+        duration: 400,
+        delay: 1500,
+        ease: 'Sine.easeIn',
+      });
     }
 
     // Flight number - subtle
     if (flightCount > 0) {
-      this.add.text(width / 2, height * 0.63, `Flight #${flightCount}`, {
+      const flightLabel = this.add.text(width / 2, height * 0.62, `Flight #${flightCount}`, {
         fontFamily: UI.FONT_FAMILY,
         fontSize: '13px',
         color: UI.COLORS.TEXT_PRIMARY,
-      }).setOrigin(0.5).setAlpha(0.4);
+      }).setOrigin(0.5).setAlpha(0);
+
+      this.tweens.add({
+        targets: flightLabel,
+        alpha: 0.4,
+        duration: 400,
+        delay: 1600,
+        ease: 'Sine.easeIn',
+      });
     }
 
-    // Choose closing lines pool based on context
-    let linesPool;
-    let firstLine;
-    if (yetiCaught) {
-      linesPool = YETI_LINES;
-      firstLine = Phaser.Math.RND.pick(YETI_LINES);
-    } else {
-      const struggles = ScoreManager.getRecentStruggles();
-      const useHints = altitude < 800 && struggles >= 2;
-      linesPool = useHints
-        ? [...STRUGGLE_HINTS, ...CLOSING_LINES]
-        : CLOSING_LINES;
-      firstLine = useHints ? Phaser.Math.RND.pick(STRUGGLE_HINTS) : Phaser.Math.RND.pick(CLOSING_LINES);
-    }
+    // Closing line — fades in after personality
+    const struggles = ScoreManager.getRecentStruggles();
+    const useHints = altitude < 800 && struggles >= 2;
+    const linesPool = useHints
+      ? [...STRUGGLE_HINTS, ...CLOSING_LINES]
+      : CLOSING_LINES;
+    const firstLine = useHints ? Phaser.Math.RND.pick(STRUGGLE_HINTS) : Phaser.Math.RND.pick(CLOSING_LINES);
 
-    // Rotating gentle closing line
-    const closingText = this.add.text(
-      width / 2,
-      height * 0.70,
-      firstLine,
-      {
-        fontFamily: UI.FONT_FAMILY,
-        fontSize: '15px',
-        color: UI.COLORS.TEXT_PRIMARY,
-        fontStyle: 'italic',
-      }
-    ).setOrigin(0.5).setAlpha(0);
+    const closingText = this.add.text(width / 2, height * 0.69, firstLine, {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '15px',
+      color: UI.COLORS.TEXT_PRIMARY,
+      fontStyle: 'italic',
+    }).setOrigin(0.5).setAlpha(0);
 
-    // Fade in closing line
+    // Closing line fades in after personality line
     this.tweens.add({
       targets: closingText,
       alpha: 0.7,
-      duration: 800,
-      delay: 400,
+      duration: 600,
+      delay: 1500,
       ease: 'Sine.easeIn',
     });
 
@@ -228,25 +328,34 @@ export default class GameOverScene extends Phaser.Scene {
       },
     });
 
-    // Restart prompt - pulsing
+    // Restart prompt — appears after full content pacing (2000ms total)
     const restartText = this.add.text(width / 2, height * 0.78, 'Tap to Fly Again', {
       fontFamily: UI.FONT_FAMILY,
       fontSize: '22px',
       color: UI.COLORS.TEXT_PRIMARY,
       shadow: { offsetX: 1, offsetY: 1, color: '#00000044', blur: 2, fill: true },
-    }).setOrigin(0.5);
+    }).setOrigin(0.5).setAlpha(0);
 
     this.tweens.add({
       targets: restartText,
-      alpha: { from: 1, to: 0.4 },
-      duration: 1000,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
+      alpha: 1,
+      duration: 500,
+      delay: 2000,
+      ease: 'Sine.easeIn',
+      onComplete: () => {
+        this.tweens.add({
+          targets: restartText,
+          alpha: { from: 1, to: 0.4 },
+          duration: 1000,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      },
     });
 
-    // Delay tap registration to prevent accidental immediate restart
-    this.time.delayedCall(800, () => {
+    // Delay tap registration — the breath moment comes from pacing, not raw delay
+    this.time.delayedCall(2000, () => {
       this.input.once('pointerdown', () => {
         this.cameras.main.fadeOut(UI.SCENE_FADE_DURATION_MS, 0, 0, 0);
         this.cameras.main.once('camerafadeoutcomplete', () => {
@@ -254,5 +363,74 @@ export default class GameOverScene extends Phaser.Scene {
         });
       });
     });
+  }
+
+  /**
+   * Determine the flight personality based on play data.
+   * Returns a single descriptive line about the flight style.
+   * @private
+   * @param {{ totalCatches: number, totalMisses: number, streak: number, altitude: number, flightCount: number, softClose: boolean }} data
+   * @returns {string}
+   */
+  _getFlightPersonality(data) {
+    const { totalCatches, totalMisses, streak, altitude, flightCount, softClose } = data;
+    const totalGates = totalCatches + totalMisses;
+    const ratio = totalGates > 0 ? totalCatches / totalGates : 0;
+
+    // Priority order: most specific → most general
+
+    // Soft close — player chose to land
+    if (softClose) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.softClose);
+    }
+
+    // Newcomer — first flight
+    if (flightCount <= 1) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.newcomer);
+    }
+
+    // Brief flight
+    if (altitude < 800) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.brief);
+    }
+
+    // Endurance — very high altitude
+    if (altitude > 7000) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.endurance);
+    }
+
+    // Flow — impressive streak
+    if (streak > 10) {
+      const line = Phaser.Math.RND.pick(PERSONALITY_LINES.flow);
+      return line.replace('{streak}', streak);
+    }
+
+    // Graceful — high catch ratio
+    if (ratio > 0.75 && totalGates >= 5) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.graceful);
+    }
+
+    // Regular — flight milestones
+    if (flightCount === 10 || flightCount === 25 || flightCount === 50 || flightCount === 100) {
+      const line = Phaser.Math.RND.pick(PERSONALITY_LINES.regular);
+      return line.replace('{count}', flightCount);
+    }
+
+    // Adventurer — lots of both catches and misses
+    if (totalCatches > 15 && totalMisses > 15) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.adventurer);
+    }
+
+    // Wanderer — low ratio but decent altitude
+    if (ratio < 0.4 && altitude > 2000 && totalGates >= 5) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.wanderer);
+    }
+
+    // Default: pick from a mix
+    const defaults = [
+      ...PERSONALITY_LINES.adventurer,
+      ...PERSONALITY_LINES.wanderer,
+    ];
+    return Phaser.Math.RND.pick(defaults);
   }
 }

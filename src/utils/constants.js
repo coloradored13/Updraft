@@ -42,7 +42,7 @@ export const AIRPLANE = {
   TRAIL_ALPHA_END: 0.0,
   BOOST_AMOUNT: 60,
   MISS_PENALTY: 45,
-  HIT_PENALTY: 80,
+  HIT_PENALTY: 30,
   WIDTH: 32,
   HEIGHT: 20,
 };
@@ -108,13 +108,13 @@ export const SCORING = {
  */
 export const DIFFICULTY = {
   /** [Birds, StormClouds, Crosswinds, Kites, Combinations] */
-  OBSTACLE_THRESHOLDS: [500, 2200, 4200, 6200, 8500],
-  WIND_WIDTH_FLOOR: 40,
+  OBSTACLE_THRESHOLDS: [1200, 3000, 5000, 7000, 9500],
+  WIND_WIDTH_FLOOR: 70,
   WIND_SPACING_CEILING: 380,
-  DRIFT_SPEED_SCALE_MAX: 2.8,
+  DRIFT_SPEED_SCALE_MAX: 1.8,
   DIFFICULTY_ALTITUDE_CAP: 9000,
   /** Exponent for the difficulty curve (>1 = front-loaded ramp) */
-  CURVE_EXPONENT: 2.0,
+  CURVE_EXPONENT: 1.5,
 };
 
 // ── Obstacles ────────────────────────────────────────────────────────────────
@@ -147,11 +147,11 @@ export const OBSTACLES = {
     SPAWN_RATE: 1.2,
     MAX_SPAWN_RATE: 3.5,
     /** Turbulence shake intensity in px */
-    TURBULENCE: 4,
+    TURBULENCE: 2,
     /** Duration of the slow effect in ms */
     SLOW_DURATION_MS: 900,
     /** Speed reduction multiplier while in storm */
-    SLOW_FACTOR: 0.45,
+    SLOW_FACTOR: 0.25,
   },
   CROSSWIND: {
     /** Width of the crosswind zone */
@@ -159,7 +159,7 @@ export const OBSTACLES = {
     /** Height of the crosswind zone */
     HEIGHT: 60,
     /** Horizontal push speed in px/s */
-    PUSH_SPEED: 170,
+    PUSH_SPEED: 80,
     SPAWN_RATE: 1.0,
     MAX_SPAWN_RATE: 3,
   },
@@ -275,7 +275,7 @@ export const VISUAL = {
   /** Max ambient elements on screen at once */
   AMBIENT_MAX_ONSCREEN: 8,
   /** Spawn interval in ms for ambient elements */
-  AMBIENT_SPAWN_INTERVAL_MS: 2000,
+  AMBIENT_SPAWN_INTERVAL_MS: 1200,
 };
 
 // ── Levels ──────────────────────────────────────────────────────────────
@@ -321,7 +321,7 @@ export const THERMAL = {
   /** Speed decay multiplier while inside a thermal zone (lower = less decay) */
   DECAY_MULTIPLIER: 0.3,
   /** Thermals stop appearing above this difficulty factor */
-  MAX_DIFFICULTY_FACTOR: 0.8,
+  MAX_DIFFICULTY_FACTOR: 1.0,
 };
 
 // ── Wonder Moments ──────────────────────────────────────────────────────────
@@ -340,7 +340,7 @@ export const WONDER = {
   CLOUD_FLASH_ALPHA: 0.3,
 
   /** Friendly passing elements: spawn every N meters starting at START_ALTITUDE */
-  FRIENDLY_INTERVAL: 1500,
+  FRIENDLY_INTERVAL: 800,
   FRIENDLY_START_ALTITUDE: 800,
   /** Alpha for friendly drifting elements */
   FRIENDLY_ALPHA: 0.55,
@@ -356,7 +356,7 @@ export const WONDER = {
   DISTANCE_MARKERS: [
     { altitude: 1000, text: 'Above the rooftops' },
     { altitude: 3000, text: 'Higher than the hills' },
-    { altitude: 5000, text: 'Above the clouds' },
+    { altitude: 5000, text: 'The golden hour begins' },
     { altitude: 7000, text: 'Where the air thins' },
     { altitude: 9000, text: 'Almost there' },
   ],

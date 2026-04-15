@@ -6,7 +6,15 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#87CEEB" />
+  <meta name="description" content="Guide a paper airplane through ever-changing skies. No timers. No pressure. Just sky." />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Updraft</title>
+  <!-- Plausible Analytics — privacy-respecting, cookie-free, GDPR-compliant
+       Replace YOURDOMAIN.COM with your actual domain after setup.
+       Remove or comment out this script during local development. -->
+  <script defer data-domain="YOURDOMAIN.COM" src="https://plausible.io/js/script.js"></script>
   <style>
     * {
       margin: 0;
@@ -27,6 +35,10 @@
     #game-container {
       width: 100%;
       height: 100%;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
     }
   </style>
 </head>

@@ -6,14 +6,37 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "build:web": "vite build",
+    "build:ios": "vite build && npx cap sync ios",
+    "build:android": "vite build && npx cap sync android",
+    "open:ios": "npx cap open ios",
+    "open:android": "npx cap open android",
+    "preview": "vite preview",
+    "generate:icons": "node scripts/generate-icons.js",
+    "generate:splash": "node scripts/generate-splash.js",
+    "generate:assets": "node scripts/generate-icons.js && node scripts/generate-splash.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/cli": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/ios": "^8.1.0",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/screen-orientation": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.0",
     "phaser": "^3.90.0",
     "tone": "^15.1.22",
     "vite": "^7.3.1"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.5",
+    "typescript": "^5.9.3",
+    "vite-plugin-compression2": "^2.4.0",
+    "vite-plugin-pwa": "^1.2.0"
   }
 }

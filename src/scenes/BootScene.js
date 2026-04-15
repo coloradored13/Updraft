@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { UI, VISUAL } from '../utils/constants.js';
 import { drawBrushStroke, drawCloudBlotch, drawSplatter } from '../utils/helpers.js';
+import { hideSplashScreen } from '../utils/capacitor.js';
 
 /**
  * BootScene - Handles asset preloading and displays a watercolor-themed loading bar.
@@ -20,6 +21,9 @@ export default class BootScene extends Phaser.Scene {
   create() {
     this._generatePlaceholderTextures();
     this._generateWatercolorTextures();
+
+    // Hide native splash screen now that game assets are ready
+    hideSplashScreen();
 
     // Brief pause to let loading bar be visible, then transition
     this.time.delayedCall(200, () => {
@@ -53,6 +57,15 @@ export default class BootScene extends Phaser.Scene {
       fontStyle: 'bold',
       shadow: { offsetX: 1, offsetY: 1, color: '#00000033', blur: 2, fill: true },
     }).setOrigin(0.5).setAlpha(0.6);
+
+    // Warm tagline below title
+    this.add.text(width / 2, height * 0.48, 'The sky is waiting', {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '14px',
+      color: UI.COLORS.TEXT_PRIMARY,
+      fontStyle: 'italic',
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000022', blur: 2, fill: true },
+    }).setOrigin(0.5).setAlpha(0.4);
 
     // Loading bar
     const barWidth = width * 0.5;

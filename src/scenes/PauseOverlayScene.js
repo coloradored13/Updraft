@@ -4,7 +4,7 @@ import { UI, GAME } from '../utils/constants.js';
 /**
  * PauseOverlayScene - A transparent overlay scene launched on top of GameScene.
  * Shows a calming dark wash with "Paused" text and current altitude.
- * Tap anywhere or press Escape/P to resume.
+ * Tap anywhere or press Escape/P to resume. "Land gently" triggers soft close.
  */
 export default class PauseOverlayScene extends Phaser.Scene {
   constructor() {
@@ -64,10 +64,38 @@ export default class PauseOverlayScene extends Phaser.Scene {
       ease: 'Sine.easeInOut',
     });
 
+    // "Land gently" option — softer, below resume
+    const landText = this.add.text(width / 2, height * 0.69, 'Land gently', {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '15px',
+      color: '#D4A76A',
+      fontStyle: 'italic',
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000044', blur: 2, fill: true },
+    }).setOrigin(0.5).setAlpha(0.7)
+      .setInteractive({ useHandCursor: true });
+
+    landText.on('pointerdown', (pointer) => {
+      pointer.event.stopPropagation();
+      // Resume GameScene so it can run the soft close flow
+      this.scene.resume('GameScene');
+      // Tell GameScene to start soft close via its event system
+      const gameScene = this.scene.get('GameScene');
+      if (gameScene && gameScene._startSoftClose) {
+        gameScene._startSoftClose();
+      }
+      this.scene.stop();
+    });
+
     // Delay input slightly to prevent accidental immediate resume
     this.time.delayedCall(300, () => {
-      // Tap to resume
-      this.input.on('pointerdown', () => {
+      // Tap to resume (but not on the "Land gently" text)
+      this.input.on('pointerdown', (pointer) => {
+        // Only resume if not clicking the land text
+        const bounds = landText.getBounds();
+        if (pointer.y >= bounds.top - 10 && pointer.y <= bounds.bottom + 10 &&
+            pointer.x >= bounds.left - 10 && pointer.x <= bounds.right + 10) {
+          return; // Let the landText handler deal with it
+        }
         this._resume();
       });
 

@@ -6,6 +6,7 @@ import GameOverScene from './scenes/GameOverScene.js';
 import VictoryScene from './scenes/VictoryScene.js';
 import PauseOverlayScene from './scenes/PauseOverlayScene.js';
 import { GAME } from './utils/constants.js';
+import { initMobilePlugins } from './utils/capacitor.js';
 
 /**
  * Updraft - A serene paper airplane game.
@@ -40,5 +41,8 @@ const config = {
 };
 
 const game = new Phaser.Game(config);
+
+// Initialize Capacitor mobile plugins (no-op on web)
+initMobilePlugins(game);
 
 export default game;
