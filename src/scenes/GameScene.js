@@ -11,11 +11,15 @@ import AudioManager from '../systems/AudioManager.js';
 import SkyBackground from '../systems/SkyBackground.js';
 import AmbientElements from '../systems/AmbientElements.js';
 import JuiceEffects from '../systems/JuiceEffects.js';
+import SkyWords from '../systems/SkyWords.js';
+import Companion from '../entities/Companion.js';
 import {
   GAME, AIRPLANE, WIND_CURRENT, PHYSICS, SCORING,
   UI, VISUAL, DIFFICULTY, OBSTACLES, LEVELS, THERMAL, WONDER,
+  MODES, DRIFT_TUNING, ASCENT_TUNING, TRICKS,
 } from '../utils/constants.js';
 import { pixelsToMeters, randomRange, randomInt, lerpColor, clamp } from '../utils/helpers.js';
+import { getSavedMode } from '../utils/modes.js';
 import { trackGameStart, trackGameOver, trackVictory } from '../utils/analytics.js';
 
 /**
@@ -33,6 +37,16 @@ import { trackGameStart, trackGameOver, trackVictory } from '../utils/analytics.
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: 'GameScene' });
+  }
+
+  /**
+   * @param {{ mode?: string }} data - Scene data; mode falls back to the saved choice
+   */
+  init(data) {
+    /** @type {string} Current game mode (MODES.DRIFT | MODES.ASCENT) */
+    this.mode = data?.mode || getSavedMode();
+    /** @type {boolean} Convenience flag — Drift is the calm default */
+    this.isDrift = this.mode !== MODES.ASCENT;
   }
 
   create() {
@@ -130,6 +144,28 @@ export default class GameScene extends Phaser.Scene {
     this._sessionArcTriggered = false;
     /** @type {boolean} Whether the soft close descent is in progress */
     this._softClosing = false;
+    /** @type {number} Index into DRIFT_TUNING.REST_INVITE_ALTITUDES */
+    this._restInviteIdx = 0;
+
+    // ── Drift: responsive sky words + companion crane ────────────────
+    /** @type {SkyWords|null} */
+    this._skyWords = this.isDrift ? new SkyWords(this) : null;
+    /** @type {Companion|null} */
+    this._companion = null;
+    /** @type {number} Index into DRIFT_TUNING.COMPANION_ALTITUDES */
+    this._companionIdx = 0;
+
+    // ── Tricks state ─────────────────────────────────────────────────
+    /** @type {number} Timestamp of the last single tap (double-tap detection) */
+    this._lastTapTime = 0;
+    /** @type {number} Timestamp of the last barrel roll */
+    this._lastRollTime = -Infinity;
+
+    // ── Ascent: stall watch ──────────────────────────────────────────
+    /** @type {number} Seconds spent pinned at minimum rise speed */
+    this._stallSeconds = 0;
+    /** @type {Phaser.GameObjects.Text|null} The quiet stall warning */
+    this._stallWarningText = null;
 
 
 // ── Wonder moments state ──────────────────────────────────────────
@@ -177,19 +213,22 @@ export default class GameScene extends Phaser.Scene {
       shadow: { offsetX: 1, offsetY: 1, color: UI.COLORS.TEXT_SHADOW, blur: 2, fill: true },
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(100).setAlpha(0.3);
 
-    // Level indicator: top-left, small
-    this.levelText = this.add.text(UI.HUD_PADDING, UI.HUD_PADDING, 'Lv 1', {
-      fontFamily: UI.FONT_FAMILY,
-      fontSize: '14px',
-      color: UI.COLORS.TEXT_PRIMARY,
-      fontStyle: 'bold',
-      shadow: { offsetX: 1, offsetY: 1, color: UI.COLORS.TEXT_SHADOW, blur: 2, fill: true },
-    }).setOrigin(0, 0).setScrollFactor(0).setDepth(100).setAlpha(0.8);
+    // Level indicator, speed bar, progress bar: Ascent only.
+    // Drift's HUD is just the phase name and a whisper of altitude.
+    if (!this.isDrift) {
+      this.levelText = this.add.text(UI.HUD_PADDING, UI.HUD_PADDING, 'Lv 1', {
+        fontFamily: UI.FONT_FAMILY,
+        fontSize: '14px',
+        color: UI.COLORS.TEXT_PRIMARY,
+        fontStyle: 'bold',
+        shadow: { offsetX: 1, offsetY: 1, color: UI.COLORS.TEXT_SHADOW, blur: 2, fill: true },
+      }).setOrigin(0, 0).setScrollFactor(0).setDepth(100).setAlpha(0.8);
 
-    this.speedBar = this.add.graphics().setScrollFactor(0).setDepth(100);
+      this.speedBar = this.add.graphics().setScrollFactor(0).setDepth(100);
 
-    // ── Journey progress bar (left side) ─────────────────────────────
-    this._createProgressBar();
+      // ── Journey progress bar (left side) ─────────────────────────────
+      this._createProgressBar();
+    }
 
     // ── Pause button (top-right, small and unobtrusive) ─────────────────
     this.pauseButton = this.add.text(width - UI.HUD_PADDING, UI.HUD_PADDING, '||', {
@@ -237,16 +276,27 @@ export default class GameScene extends Phaser.Scene {
     this._lastPhase = this.audioManager.getPhaseForAltitude(0);
 
     // ── Input ────────────────────────────────────────────────────────────
+    // Single tap: change direction. Double tap: barrel roll (the second
+    // tap re-toggles direction back, so a roll never changes your course).
     this.input.on('pointerdown', async () => {
       await this._initAudioOnGesture();
-      if (!this.gameOver) {
+      if (this.gameOver) return;
+
+      const now = this.time.now;
+      if (now - this._lastTapTime < TRICKS.DOUBLE_TAP_MS) {
+        this._lastTapTime = 0;
         this.airplane.toggleDirection();
-        this.audioManager.playSFX('directionChange');
-        this.juice.directionStreak(
-          this.airplane.x, this.airplane.y,
-          this.airplane.driftDirection
-        );
+        this._doBarrelRoll();
+        return;
       }
+      this._lastTapTime = now;
+
+      this.airplane.toggleDirection();
+      this.audioManager.playSFX('directionChange');
+      this.juice.directionStreak(
+        this.airplane.x, this.airplane.y,
+        this.airplane.driftDirection
+      );
     });
 
     // Keyboard controls (arrow keys for web)
@@ -260,6 +310,183 @@ export default class GameScene extends Phaser.Scene {
     });
     this.input.keyboard.on('keydown-P', () => {
       if (!this.gameOver) this._togglePause();
+    });
+
+    // Barrel roll on Space or Up (web)
+    this.input.keyboard.on('keydown-SPACE', async () => {
+      await this._initAudioOnGesture();
+      if (!this.gameOver) this._doBarrelRoll();
+    });
+    this.input.keyboard.on('keydown-UP', async () => {
+      await this._initAudioOnGesture();
+      if (!this.gameOver) this._doBarrelRoll();
+    });
+  }
+
+  /**
+   * Perform a barrel roll: a full spin that rides on top of banking,
+   * with a flourish of light and a tiny lift. In Drift it's pure play;
+   * in Ascent, catching a current right after one is a style bonus.
+   * @private
+   */
+  _doBarrelRoll() {
+    const now = this.time.now;
+    if (now - this._lastRollTime < TRICKS.ROLL_COOLDOWN_MS) return;
+    if (!this.airplane.barrelRoll(this.airplane.driftDirection || 1, TRICKS.ROLL_DURATION_MS)) return;
+
+    this._lastRollTime = now;
+    this.audioManager.playSFX('streakSmall');
+    this.juice.rollFlourish(this.airplane);
+    this.airplane.applyBoost(TRICKS.ROLL_BOOST, 300);
+
+    // The companion answers a beat later — call and response
+    if (this._companion && this._companion.active) {
+      this._companion.respondRoll();
+    }
+  }
+
+  /**
+   * Drift-mode per-frame systems: responsive sky words and the companion.
+   * @private
+   * @param {number} delta - Frame delta in ms
+   */
+  _updateDrift(delta) {
+    this._skyWords.update(this.altitudeMeters, this._flowState());
+    this._skyWords.cleanup(this.cameras.main.scrollY);
+    this._checkCompanion();
+    if (this._companion && this._companion.active) {
+      this._companion.update(delta);
+    }
+  }
+
+  /**
+   * Read the flight's current character from the performance rating the
+   * adaptive camera already tracks. Words respond to how you're flying.
+   * @private
+   * @returns {'flow'|'struggle'|'ambient'}
+   */
+  _flowState() {
+    if (this._performanceRating > 0.55) return 'flow';
+    if (this._performanceRating < 0.15) return 'struggle';
+    return 'ambient';
+  }
+
+  /**
+   * Spawn a companion crane at the configured altitudes (Drift only).
+   * @private
+   */
+  _checkCompanion() {
+    if (this._companionIdx >= DRIFT_TUNING.COMPANION_ALTITUDES.length) return;
+    if (this._companion && this._companion.active) return;
+    const triggerAlt = DRIFT_TUNING.COMPANION_ALTITUDES[this._companionIdx];
+    if (this.altitudeMeters < triggerAlt) return;
+
+    this._companionIdx += 1;
+    this._companion = new Companion(this, this.airplane, Math.random() > 0.5);
+
+    // It stays a while, then spirals away
+    this.time.delayedCall(DRIFT_TUNING.COMPANION_DURATION_MS, () => {
+      if (this._companion && this._companion.active) {
+        this._companion.depart(() => { this._companion = null; });
+      }
+    });
+  }
+
+  /**
+   * Ascent only: if the airplane sits pinned at minimum speed with no
+   * catches for too long, the wind gently sets it down — a real ending,
+   * arrived at kindly.
+   * @private
+   * @param {number} delta - Frame delta in ms
+   */
+  _updateStallWatch(delta) {
+    if (this.gameOver || this._softClosing) return;
+
+    const atFloor = this.airplane.riseSpeed <= PHYSICS.MIN_RISE_SPEED + 1;
+    if (atFloor) {
+      this._stallSeconds += delta / 1000;
+    } else {
+      this._stallSeconds = 0;
+      if (this._stallWarningText) {
+        const t = this._stallWarningText;
+        this._stallWarningText = null;
+        this.tweens.add({ targets: t, alpha: 0, duration: 400, onComplete: () => t.destroy() });
+      }
+      return;
+    }
+
+    if (this._stallSeconds >= ASCENT_TUNING.STALL_WARNING_SECONDS && !this._stallWarningText) {
+      this._stallWarningText = this.add.text(
+        this.scale.width / 2, this.scale.height * 0.32, 'the wind is thinning…', {
+          fontFamily: UI.FONT_FAMILY,
+          fontSize: '16px',
+          color: UI.COLORS.TEXT_PRIMARY,
+          fontStyle: 'italic',
+          shadow: { offsetX: 0, offsetY: 0, color: '#00000066', blur: 6, fill: true },
+        }
+      ).setOrigin(0.5).setScrollFactor(0).setDepth(101).setAlpha(0);
+      this.tweens.add({ targets: this._stallWarningText, alpha: 0.7, duration: 600 });
+    }
+
+    if (this._stallSeconds >= ASCENT_TUNING.STALL_SECONDS) {
+      this._windSetDown();
+    }
+  }
+
+  /**
+   * The Ascent ending: the wind sets the airplane down. Gentle descent,
+   * warm fade, results screen — a landing, not a death.
+   * @private
+   */
+  _windSetDown() {
+    if (this.gameOver) return;
+    this.gameOver = true;
+
+    if (this._stallWarningText) {
+      this._stallWarningText.destroy();
+      this._stallWarningText = null;
+    }
+
+    this.audioManager.softFadeOut(3);
+
+    // Drift down with a paper-light sway
+    this.tweens.add({
+      targets: this.airplane,
+      y: this.airplane.y + this.scale.height * 0.35,
+      duration: 2800,
+      ease: 'Sine.easeInOut',
+    });
+    this.tweens.add({
+      targets: this.airplane,
+      x: this.airplane.x + 30,
+      duration: 700,
+      yoyo: true,
+      repeat: 2,
+      ease: 'Sine.easeInOut',
+    });
+
+    this.time.delayedCall(1800, () => {
+      this.cameras.main.fadeOut(1200, 212, 167, 106);
+    });
+
+    this.time.delayedCall(3100, () => {
+      ScoreManager.recordCrashAltitude(this.altitudeMeters);
+      trackGameOver(this.altitudeMeters);
+      const results = this.scoreManager.getResults();
+      this.scene.start('GameOverScene', {
+        score: results.score,
+        altitude: this.altitudeMeters,
+        streak: results.bestStreak,
+        isNewHighScore: results.isNewHighScore,
+        personalBest: results.personalBest,
+        level: results.level,
+        levelName: results.levelName,
+        flightCount: results.flightCount,
+        totalCatches: results.totalCatches,
+        totalMisses: results.totalMisses,
+        landedByWind: true,
+        mode: this.mode,
+      });
     });
   }
 
@@ -345,9 +572,15 @@ export default class GameScene extends Phaser.Scene {
     try { this._checkThermalZones(); } catch (e) { console.warn('thermal:', e.message); }
     try { this._spawnWindCurrentsAhead(); } catch (e) { console.warn('wind spawn:', e.message); }
     try { this._checkWindCurrents(); } catch (e) { console.warn('wind check:', e.message); }
-    try { this._spawnObstacles(); } catch (e) { console.warn('obstacle spawn:', e.message); }
-    try { this._updateObstacles(time, delta); } catch (e) { console.warn('obstacle update:', e.message); }
-    try { this._checkObstacleCollisions(); } catch (e) { console.warn('collision:', e.message); }
+    if (!this.isDrift) {
+      // Obstacles are an Ascent concern — Drift's sky holds nothing against you
+      try { this._spawnObstacles(); } catch (e) { console.warn('obstacle spawn:', e.message); }
+      try { this._updateObstacles(time, delta); } catch (e) { console.warn('obstacle update:', e.message); }
+      try { this._checkObstacleCollisions(); } catch (e) { console.warn('collision:', e.message); }
+      try { this._updateStallWatch(delta); } catch (e) { console.warn('stall:', e.message); }
+    } else {
+      try { this._updateDrift(delta); } catch (e) { console.warn('drift:', e.message); }
+    }
     try { this._cleanupEntities(); } catch (e) { console.warn('cleanup:', e.message); }
     try { this.skyBackground.update(this.altitudeMeters, time, delta); } catch (e) { console.warn('sky:', e.message); }
     try { this.ambientElements.update(this.altitudeMeters, time, delta); } catch (e) { console.warn('ambient:', e.message); }
@@ -560,8 +793,11 @@ export default class GameScene extends Phaser.Scene {
       if (wc.active && wc.hasBeenPassedBy(airplaneY)) {
         wc.miss();
         this._performanceRating = Math.max(this._performanceRating - 0.1, 0.0);
-        // Apply penalty gradually over 400ms — the wind just dies down naturally
-        this._applyGradualPenalty(AIRPLANE.MISS_PENALTY, 400);
+        // Apply penalty gradually over 400ms — the wind just dies down naturally.
+        // In Drift the wind sighs rather than punishes.
+        const missPenalty = AIRPLANE.MISS_PENALTY
+          * (this.isDrift ? DRIFT_TUNING.MISS_PENALTY_SCALE : 1);
+        this._applyGradualPenalty(missPenalty, 400);
         this.scoreManager.onWindMiss();
         this.audioManager.onWindMiss();
 
@@ -581,16 +817,31 @@ export default class GameScene extends Phaser.Scene {
     // Audio feedback
     this.audioManager.playSFX('currentCatch');
     this.audioManager.onWindCatch();
-    if (result.isMilestone) {
-      this.audioManager.playSFX(result.milestoneType === 'large' ? 'streakLarge' : 'streakSmall');
-    }
 
     // Juice: zoom pulse + spatter
     this.juice.catchPulse(this.airplane.x, this.airplane.y);
 
+    // Drift keeps only the soft feedback — no milestones, no fanfare.
+    // The catch itself is the reward.
+    if (this.isDrift) return;
+
+    if (result.isMilestone) {
+      this.audioManager.playSFX(result.milestoneType === 'large' ? 'streakLarge' : 'streakSmall');
+    }
+
+    // Ascent: catching a current mid-roll (or just after) is a style moment
+    if (this.time.now - this._lastRollTime < TRICKS.ROLL_DURATION_MS + ASCENT_TUNING.STYLE_WINDOW_MS) {
+      this._showStylishCatch();
+    }
+
     // Juice: streak milestone ring
     if (result.isMilestone) {
       this.juice.streakRing(this.airplane.x, this.airplane.y, result.milestoneType);
+    }
+
+    // Big streaks earn the surge — the whole sky rushes past
+    if (result.isMilestone && result.milestoneType === 'large') {
+      this.juice.surgeRush();
     }
 
     // Streak moved to end-of-flight summary
@@ -620,6 +871,36 @@ export default class GameScene extends Phaser.Scene {
         onComplete: () => flash.destroy(),
       });
     }
+  }
+
+  /**
+   * A catch landed during/just after a barrel roll — style points.
+   * Bonus speed plus a quick flourish of text. The "whoa" is earned.
+   * @private
+   */
+  _showStylishCatch() {
+    this.airplane.applyBoost(25, 400);
+    if (typeof this.scoreManager.addBonus === 'function') {
+      this.scoreManager.addBonus(ASCENT_TUNING.STYLE_BONUS);
+    }
+
+    const text = this.add.text(this.airplane.x, this.airplane.y - 34, 'stylish!', {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '18px',
+      color: UI.COLORS.ACCENT,
+      fontStyle: 'italic bold',
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000066', blur: 3, fill: true },
+    }).setOrigin(0.5).setDepth(101);
+
+    this.tweens.add({
+      targets: text,
+      y: text.y - 26,
+      alpha: 0,
+      angle: 8,
+      duration: 900,
+      ease: 'Sine.easeOut',
+      onComplete: () => text.destroy(),
+    });
   }
 
   /**
@@ -827,8 +1108,10 @@ export default class GameScene extends Phaser.Scene {
 
     for (const bird of this.birds) {
       if (bird._hit) continue;
-      if (Math.abs(ax - bird.x) < ahw + OBSTACLES.BIRD.WIDTH / 2 &&
-          Math.abs(ay - bird.y) < ahh + OBSTACLES.BIRD.HEIGHT / 2) {
+      const dx = Math.abs(ax - bird.x);
+      const dy = Math.abs(ay - bird.y);
+      if (dx < ahw + OBSTACLES.BIRD.WIDTH / 2 &&
+          dy < ahh + OBSTACLES.BIRD.HEIGHT / 2) {
         bird._hit = true;
         this.airplane.applyPenalty(AIRPLANE.HIT_PENALTY);
         this._performanceRating = Math.max(this._performanceRating - 0.12, 0.0);
@@ -836,6 +1119,16 @@ export default class GameScene extends Phaser.Scene {
         this.audioManager.playSFX('birdHit');
         this.juice.birdHitSway(bird.x, bird.y);
         this.tweens.add({ targets: bird, alpha: 0, duration: 200, onComplete: () => bird.setVisible(false) });
+      } else if (!bird._nearMissed &&
+          dx < ahw + OBSTACLES.BIRD.WIDTH / 2 + ASCENT_TUNING.NEAR_MISS_RADIUS &&
+          dy < ahh + OBSTACLES.BIRD.HEIGHT / 2 + ASCENT_TUNING.NEAR_MISS_RADIUS) {
+        // Grazed it — the sharp intake of breath
+        bird._nearMissed = true;
+        this.juice.nearMissPunch((ax + bird.x) / 2, (ay + bird.y) / 2);
+        this.audioManager.playSFX('crosswindTelegraph');
+        if (typeof this.scoreManager.addBonus === 'function') {
+          this.scoreManager.addBonus(ASCENT_TUNING.NEAR_MISS_BONUS);
+        }
       }
     }
 
@@ -958,6 +1251,10 @@ export default class GameScene extends Phaser.Scene {
   _checkLevelUp() {
     const result = this.scoreManager.checkLevelUp(this.altitudeMeters);
     if (result) {
+      // Drift: the sky changing IS the event — music crossfades, colors
+      // wash, and nothing interrupts. No banner, no slow-mo, no reward.
+      if (this.isDrift) return;
+
       // Speed boost reward
       this.airplane.applyBoost(LEVELS.LEVEL_UP_BOOST, LEVELS.LEVEL_UP_BOOST_DURATION_MS);
 
@@ -1123,6 +1420,10 @@ export default class GameScene extends Phaser.Scene {
     this.altitudeText.setText(this.scoreManager.levelName);
     this.altitudeSubText.setText(`${this.altitudeMeters}m`);
     this.scoreManager.addAltitudeScore(this.altitudeMeters);
+
+    // Drift's HUD ends here — no level, no bars, no progress
+    if (this.isDrift) return;
+
     this.levelText.setText(`Lv ${this.scoreManager.level}`);
 
     // Speed bar
@@ -1325,12 +1626,15 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // 4. Distance markers — trigger 400m early so they appear AHEAD
-    for (const marker of WONDER.DISTANCE_MARKERS) {
-      const triggerAlt = marker.altitude - 400;
-      if (alt >= triggerAlt && !this._distanceMarkerTriggered.has(marker.altitude)) {
-        this._distanceMarkerTriggered.add(marker.altitude);
-        this._spawnDistanceMarker(marker);
+    // 4. Distance markers — trigger 400m early so they appear AHEAD.
+    // Drift replaces these with SkyWords, which respond to the flight.
+    if (!this.isDrift) {
+      for (const marker of WONDER.DISTANCE_MARKERS) {
+        const triggerAlt = marker.altitude - 400;
+        if (alt >= triggerAlt && !this._distanceMarkerTriggered.has(marker.altitude)) {
+          this._distanceMarkerTriggered.add(marker.altitude);
+          this._spawnDistanceMarker(marker);
+        }
       }
     }
 
@@ -1687,22 +1991,32 @@ export default class GameScene extends Phaser.Scene {
    * @private
    */
   _checkSessionArc() {
-    if (this._sessionArcTriggered || this._softClosing || this.altitudeMeters < 5000) return;
-    this._sessionArcTriggered = true;
+    // Ascent runs uninterrupted — a competitive climb doesn't ask questions.
+    if (!this.isDrift) return;
+    if (this._softClosing || this.gameOver) return;
+    if (this._restInviteIdx >= DRIFT_TUNING.REST_INVITE_ALTITUDES.length) return;
+
+    const inviteAlt = DRIFT_TUNING.REST_INVITE_ALTITUDES[this._restInviteIdx];
+    if (this.altitudeMeters < inviteAlt) return;
+    this._restInviteIdx += 1;
+
+    const isGolden = this._restInviteIdx === 1;
+    const message = isGolden
+      ? 'The light is turning gold.\nYou could rest here.'
+      : 'The stars will hold you now.\nOr carry you higher.';
+    const glow = isGolden ? '#D4A76A88' : '#AABBFF66';
+    const landLabel = isGolden ? 'Land gently' : 'Rest among them';
 
     const { width, height } = this.scale;
 
-    // Distance marker
-    const markerText = this.add.text(width / 2, height * 0.3,
-      'The light is turning gold.\nYou could rest here.', {
-        fontFamily: UI.FONT_FAMILY,
-        fontSize: '17px',
-        color: UI.COLORS.TEXT_PRIMARY,
-        fontStyle: 'italic',
-        align: 'center',
-        shadow: { offsetX: 0, offsetY: 0, color: '#D4A76A88', blur: 10, fill: true },
-      }
-    ).setOrigin(0.5).setScrollFactor(0).setDepth(102).setAlpha(0);
+    const markerText = this.add.text(width / 2, height * 0.3, message, {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '17px',
+      color: UI.COLORS.TEXT_PRIMARY,
+      fontStyle: 'italic',
+      align: 'center',
+      shadow: { offsetX: 0, offsetY: 0, color: glow, blur: 10, fill: true },
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(102).setAlpha(0);
 
     this.tweens.add({
       targets: markerText,
@@ -1721,11 +2035,12 @@ export default class GameScene extends Phaser.Scene {
       onComplete: () => markerText.destroy(),
     });
 
-    // After 500m more (~5500m), show the gentle choice
+    // After ~500m more, show the gentle choice
+    const choiceAlt = inviteAlt + 500;
     const checkChoice = () => {
       if (this.gameOver || this._softClosing) return;
-      if (this.altitudeMeters >= 5500) {
-        this._showSessionArcChoice();
+      if (this.altitudeMeters >= choiceAlt) {
+        this._showSessionArcChoice(landLabel);
       } else {
         this.time.delayedCall(200, checkChoice);
       }
@@ -1734,10 +2049,11 @@ export default class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Show the "Fly on" / "Land gently" choice overlay.
+   * Show the "Fly on" / land choice overlay.
    * @private
+   * @param {string} [landLabel] - Label for the landing option
    */
-  _showSessionArcChoice() {
+  _showSessionArcChoice(landLabel = 'Land gently') {
     const { width, height } = this.scale;
 
     const choiceBg = this.add.graphics().setScrollFactor(0).setDepth(110);
@@ -1753,7 +2069,7 @@ export default class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setScrollFactor(0).setDepth(111).setAlpha(0)
       .setInteractive({ useHandCursor: true });
 
-    const landText = this.add.text(width / 2, height * 0.50, 'Land gently', {
+    const landText = this.add.text(width / 2, height * 0.50, landLabel, {
       fontFamily: UI.FONT_FAMILY,
       fontSize: '17px',
       color: '#D4A76A',
@@ -1849,6 +2165,7 @@ export default class GameScene extends Phaser.Scene {
         totalCatches: results.totalCatches,
         totalMisses: results.totalMisses,
         softClose: true,
+        mode: this.mode,
       });
     });
   }

@@ -346,4 +346,98 @@ export default class JuiceEffects {
       this.scene.audioManager.playSFX('stormExit');
     }
   }
+
+  // ── Barrel Roll ─────────────────────────────────────────────────────────
+
+  /**
+   * Flourish for a barrel roll: the trail briefly blooms into a loop of
+   * light-motes around the airplane — like the air applauding quietly.
+   * @param {import('../entities/Airplane.js').default} airplane
+   */
+  rollFlourish(airplane) {
+    if (!this.scene.textures.exists('trail_particle')) return;
+
+    const burst = this.scene.add.particles(airplane.x, airplane.y, 'trail_particle', {
+      speed: { min: 40, max: 90 },
+      angle: { min: 0, max: 360 },
+      scale: { start: 0.6, end: 0 },
+      alpha: { start: 0.6, end: 0 },
+      lifespan: 550,
+      quantity: 14,
+      blendMode: 'ADD',
+      tint: [0xFFFFFF, 0xFFE9A8, 0xAED6F1],
+    });
+    burst.explode(14);
+    this.scene.time.delayedCall(650, () => burst.destroy());
+  }
+
+  // ── Ascent: Streak Surge ────────────────────────────────────────────────
+
+  /**
+   * Screen-wide wind rush for big streak milestones — dozens of light
+   * streaks race upward past the camera. The "whoa" moment.
+   */
+  surgeRush() {
+    const { width, height } = this.scene.scale;
+
+    for (let i = 0; i < 16; i++) {
+      const streak = this.scene.add.graphics().setScrollFactor(0).setDepth(94);
+      const x = Math.random() * width;
+      const streakH = 40 + Math.random() * 120;
+      streak.fillStyle(0xFFFFFF, 0.10 + Math.random() * 0.22);
+      streak.fillRect(x, height + streakH, 2, streakH);
+
+      this.scene.tweens.add({
+        targets: streak,
+        y: -(height + streakH * 2 + 200),
+        duration: 350 + Math.random() * 450,
+        delay: Math.random() * 250,
+        ease: 'Power2',
+        onComplete: () => streak.destroy(),
+      });
+    }
+
+    // A breath of camera lift
+    const cam = this.scene.cameras.main;
+    this.scene.tweens.add({
+      targets: cam,
+      zoom: 1.04,
+      duration: 180,
+      yoyo: true,
+      ease: 'Sine.easeOut',
+    });
+  }
+
+  // ── Ascent: Near Miss ───────────────────────────────────────────────────
+
+  /**
+   * Camera punch for a near-miss — a sharp intake of breath.
+   * @param {number} x - World X of the moment
+   * @param {number} y - World Y of the moment
+   */
+  nearMissPunch(x, y) {
+    const cam = this.scene.cameras.main;
+    this.scene.tweens.add({
+      targets: cam,
+      zoom: 1.05,
+      duration: 90,
+      yoyo: true,
+      ease: 'Power3',
+    });
+
+    // A thin ring where the almost-collision happened
+    const g = this.scene.add.graphics().setDepth(95);
+    g.setPosition(x, y);
+    g.lineStyle(2, 0xFFFFFF, 0.5);
+    g.strokeCircle(0, 0, 12);
+    this.scene.tweens.add({
+      targets: g,
+      alpha: 0,
+      scaleX: 2.4,
+      scaleY: 2.4,
+      duration: 380,
+      ease: 'Sine.easeOut',
+      onComplete: () => g.destroy(),
+    });
+  }
 }
