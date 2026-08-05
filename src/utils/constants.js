@@ -391,6 +391,20 @@ export const DRIFT_TUNING = {
   WORD_INTERVAL_MAX: 850,
   /** Altitudes (m) offering a gentle invitation to rest */
   REST_INVITE_ALTITUDES: [5000, 8500],
+  /** One-breath mode: the invitation comes just after the Day transition */
+  BREATH_INVITE_ALTITUDE: 2200,
+};
+
+/** Local ghost planes — your own past flights, replayed as faint company. */
+export const GHOSTS = {
+  /** How many past flights the sky remembers */
+  MAX_STORED: 3,
+  /** Trace sample interval (ms) */
+  SAMPLE_MS: 500,
+  /** Max points kept per trace (~3.3 min of flight) */
+  MAX_POINTS: 400,
+  /** Silhouette opacity */
+  ALPHA: 0.2,
 };
 
 /** Tuning specific to Ascent mode. */
@@ -409,7 +423,7 @@ export const ASCENT_TUNING = {
   STYLE_WINDOW_MS: 500,
 };
 
-/** Barrel roll trick tuning (available in both modes). */
+/** Trick tuning (available in both modes). */
 export const TRICKS = {
   /** Max gap between taps to register a double-tap (ms) */
   DOUBLE_TAP_MS: 260,
@@ -417,8 +431,19 @@ export const TRICKS = {
   ROLL_DURATION_MS: 560,
   /** Small speed boost from a roll — play should feel good, not optimal */
   ROLL_BOOST: 15,
-  /** Cooldown between rolls (ms) */
+  /** Cooldown between tricks (ms) */
   ROLL_COOLDOWN_MS: 700,
+
+  /** Loop-the-loop: swipe up (or Down arrow). Learned from the crane. */
+  LOOP_DURATION_MS: 760,
+  /** Radius of the sprite-local circle the plane traces (px) */
+  LOOP_RADIUS: 20,
+  /** Loop boost — a touch more lift than the roll */
+  LOOP_BOOST: 25,
+  /** Swipe-up detection: minimum upward travel (px) within the window */
+  SWIPE_MIN_DY: 60,
+  /** Swipe-up detection: max press duration (ms) */
+  SWIPE_MAX_MS: 400,
 };
 
 // ── Audio ────────────────────────────────────────────────────────────────────

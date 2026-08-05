@@ -112,6 +112,16 @@ export default class SkyWords {
   }
 
   /**
+   * Speak a specific line right now, outside the interval cadence —
+   * for moments the game notices (a ghost appearing, a lesson learned).
+   * @param {string} line
+   */
+  speak(line) {
+    this._lastLine = line;
+    this._speak(line);
+  }
+
+  /**
    * Render a line drifting in the sky ahead of the airplane.
    * @private
    * @param {string} line
