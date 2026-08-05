@@ -192,10 +192,8 @@ export default class GameScene extends Phaser.Scene {
     this._lastTapTime = 0;
     /** @type {number} Timestamp of the last trick (roll or loop) */
     this._lastRollTime = -Infinity;
-    /** @type {{loopDone: boolean}} Persisted trick knowledge */
+    /** @type {{rollDone: boolean, loopDone: boolean}} Persisted trick knowledge */
     this._tricks = this._loadTricks();
-    /** @type {boolean} Whether the loop hint has shown this session */
-    this._loopHintShown = false;
     /** @type {number} Pointer-down y for swipe detection */
     this._pressY = 0;
     /** @type {number} Pointer-down time for swipe detection */
@@ -214,8 +212,10 @@ export default class GameScene extends Phaser.Scene {
     // or abandoned — leaves a trace behind.
     this.events.once('shutdown', () => this._ghosts.saveTrace());
 
-    // The crane teaching the loop
-    this.events.on('companion-loop', () => this._onCompanionLoop());
+    // The crane's demonstrations: trick → expectant pause → gesture cue
+    /** @type {number} Invitations shown during the current companion visit */
+    this._invitesThisVisit = 0;
+    this.events.on('companion-demo', (trick) => this._onCompanionDemo(trick));
 
     // ── Ascent: stall watch ──────────────────────────────────────────
     /** @type {number} Seconds spent pinned at minimum rise speed */
@@ -403,15 +403,18 @@ export default class GameScene extends Phaser.Scene {
   /**
    * Load persisted trick knowledge.
    * @private
-   * @returns {{loopDone: boolean}}
+   * @returns {{rollDone: boolean, loopDone: boolean}}
    */
   _loadTricks() {
     try {
       const raw = localStorage.getItem('updraft_tricks');
       const parsed = raw ? JSON.parse(raw) : {};
-      return { loopDone: Boolean(parsed.loopDone) };
+      return {
+        rollDone: Boolean(parsed.rollDone),
+        loopDone: Boolean(parsed.loopDone),
+      };
     } catch (_) {
-      return { loopDone: false };
+      return { rollDone: false, loopDone: false };
     }
   }
 
@@ -423,32 +426,120 @@ export default class GameScene extends Phaser.Scene {
   }
 
   /**
-   * The crane just demonstrated a loop. If the player has never looped,
-   * offer the hint — quiet, once per session.
+   * The crane finished a demonstration and is holding its expectant
+   * pause. If the trick isn't learned yet, render the invitation:
+   * a line beside the crane, and the gesture itself near the plane.
+   * @private
+   * @param {'roll'|'loop'} trick
+   */
+  _onCompanionDemo(trick) {
+    if (this.gameOver) return;
+    const learned = trick === 'loop' ? this._tricks.loopDone : this._tricks.rollDone;
+    if (learned) return;
+    if (this._invitesThisVisit >= TRICKS.INVITES_PER_VISIT) return;
+    this._invitesThisVisit += 1;
+
+    const touch = this.sys.game.device.input.touch;
+    const line = trick === 'loop'
+      ? (touch ? 'swipe up — like this' : 'swipe up — or ↓')
+      : (touch ? 'tap twice — like this' : 'double-tap — or space');
+
+    // The line belongs to the crane: it floats just above it and follows
+    const text = this.add.text(0, 0, line, {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '14px',
+      color: UI.COLORS.TEXT_PRIMARY,
+      fontStyle: 'italic',
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000055', blur: 2, fill: true },
+    }).setOrigin(0.5).setDepth(101).setAlpha(0);
+
+    const follow = this.time.addEvent({
+      delay: 33,
+      loop: true,
+      callback: () => {
+        if (!this._companion || !this._companion.active || !text.active) return;
+        const x = clamp(this._companion.x, 70, GAME.WIDTH - 70);
+        text.setPosition(x, this._companion.y - 36);
+      },
+    });
+
+    this.tweens.add({ targets: text, alpha: 0.85, duration: 500 });
+    this.tweens.add({
+      targets: text,
+      alpha: 0,
+      delay: TRICKS.INVITE_PAUSE_MS - 600,
+      duration: 600,
+      onComplete: () => {
+        follow.remove();
+        text.destroy();
+      },
+    });
+
+    // And the gesture itself, shown where the player's attention lives
+    if (trick === 'roll') {
+      this._showTapRipples();
+    } else {
+      this._showSwipeArrow();
+    }
+  }
+
+  /**
+   * Gesture cue for the roll: two double-tap ripple pairs beside the plane.
    * @private
    */
-  _onCompanionLoop() {
-    if (this._tricks.loopDone || this._loopHintShown || this.gameOver) return;
-    this._loopHintShown = true;
-
-    const hint = this.add.text(
-      this.scale.width / 2, this.scale.height * 0.58, 'swipe up to loop', {
-        fontFamily: UI.FONT_FAMILY,
-        fontSize: '16px',
-        color: UI.COLORS.TEXT_PRIMARY,
-        fontStyle: 'italic',
-        shadow: { offsetX: 1, offsetY: 1, color: '#00000055', blur: 2, fill: true },
-      }
-    ).setOrigin(0.5).setScrollFactor(0).setDepth(101).setAlpha(0);
-
-    this.tweens.add({ targets: hint, alpha: 0.75, duration: 700 });
-    this.tweens.add({
-      targets: hint,
-      alpha: 0,
-      delay: 3800,
-      duration: 600,
-      onComplete: () => hint.destroy(),
+  _showTapRipples() {
+    const side = this.airplane.x > GAME.WIDTH / 2 ? -46 : 46;
+    const ripple = (delay) => this.time.delayedCall(delay, () => {
+      if (this.gameOver) return;
+      const g = this.add.graphics().setDepth(96);
+      g.setPosition(this.airplane.x + side, this.airplane.y - 6);
+      g.lineStyle(2, 0xFFFFFF, 0.5);
+      g.strokeCircle(0, 0, 9);
+      this.tweens.add({
+        targets: g,
+        alpha: 0,
+        scaleX: 2.2,
+        scaleY: 2.2,
+        duration: 420,
+        ease: 'Sine.easeOut',
+        onComplete: () => g.destroy(),
+      });
     });
+    // Two taps, a beat, two taps — the rhythm of the gesture itself
+    ripple(0); ripple(250);
+    ripple(1300); ripple(1550);
+  }
+
+  /**
+   * Gesture cue for the loop: wind motes rising along the swipe path.
+   * @private
+   */
+  _showSwipeArrow() {
+    if (!this.textures.exists('trail_particle')) return;
+    const side = this.airplane.x > GAME.WIDTH / 2 ? -46 : 46;
+
+    const wave = (baseDelay) => {
+      for (let i = 0; i < 6; i++) {
+        this.time.delayedCall(baseDelay + i * 90, () => {
+          if (this.gameOver) return;
+          const x = this.airplane.x + side;
+          const startY = this.airplane.y + 24;
+          const mote = this.add.image(x, startY, 'trail_particle')
+            .setDepth(96).setAlpha(0.7).setScale(0.5).setBlendMode('ADD');
+          this.tweens.add({
+            targets: mote,
+            y: startY - 72,
+            alpha: 0,
+            scale: 0.15,
+            duration: 620,
+            ease: 'Sine.easeOut',
+            onComplete: () => mote.destroy(),
+          });
+        });
+      }
+    };
+    wave(0);
+    wave(1500);
   }
 
   /**
@@ -470,6 +561,7 @@ export default class GameScene extends Phaser.Scene {
       this._tricks.loopDone = true;
       this._saveTricks();
       if (this._companion && this._companion.active) {
+        this._companion.endInvite();
         this._companion.celebrateLoop();
       }
       if (this._skyWords) this._skyWords.speak('You learned that from a friend.');
@@ -494,8 +586,17 @@ export default class GameScene extends Phaser.Scene {
     this.juice.rollFlourish(this.airplane);
     this.airplane.applyBoost(TRICKS.ROLL_BOOST, 300);
 
-    // The companion answers a beat later — call and response
-    if (this._companion && this._companion.active) {
+    if (!this._tricks.rollDone) {
+      // First roll ever — the lesson landed
+      this._tricks.rollDone = true;
+      this._saveTricks();
+      if (this._companion && this._companion.active) {
+        this._companion.endInvite();
+        this._companion.respondRoll();
+        if (this._skyWords) this._skyWords.speak('Now you’re flying together.');
+      }
+    } else if (this._companion && this._companion.active) {
+      // The companion answers a beat later — call and response
       this._companion.respondRoll();
     }
   }
@@ -538,6 +639,7 @@ export default class GameScene extends Phaser.Scene {
 
     const visitIndex = this._companionIdx;
     this._companionIdx += 1;
+    this._invitesThisVisit = 0;
     this._companion = new Companion(this, this.airplane, Math.random() > 0.5, visitIndex);
 
     // It stays a while, then spirals away

@@ -444,6 +444,11 @@ export const TRICKS = {
   SWIPE_MIN_DY: 60,
   /** Swipe-up detection: max press duration (ms) */
   SWIPE_MAX_MS: 400,
+
+  /** How long the crane holds its expectant pause after a demo (ms) */
+  INVITE_PAUSE_MS: 4000,
+  /** Max invitations per companion visit — patient, never nagging */
+  INVITES_PER_VISIT: 3,
 };
 
 // ── Audio ────────────────────────────────────────────────────────────────────

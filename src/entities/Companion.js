@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME } from '../utils/constants.js';
+import { GAME, TRICKS } from '../utils/constants.js';
 import { lerp } from '../utils/helpers.js';
 
 /** How far behind the airplane's path the crane flies, in ms */
@@ -64,18 +64,16 @@ export default class Companion extends Phaser.GameObjects.Container {
       onComplete: () => { this._arrived = true; },
     });
 
-    // Occasional self-trick — an invitation to play. First visit rolls;
-    // later visits demonstrate the loop, teaching by example.
+    /** @private {boolean} Holding the expectant "your turn" pause */
+    this._inviting = false;
+
+    // Occasional demonstration — trick, then an expectant pause that
+    // makes the demo read as an invitation, not an animation.
+    // First visit teaches the roll; later visits teach the loop.
     this._rollTimer = scene.time.addEvent({
       delay: SELF_ROLL_INTERVAL_MS + Math.random() * 4000,
       loop: true,
-      callback: () => {
-        if (this.visitIndex >= 1) {
-          this._doLoop();
-        } else {
-          this._doRoll();
-        }
-      },
+      callback: () => this._demonstrate(),
     });
 
     // Wing flap — gentle, continuous
@@ -154,7 +152,11 @@ export default class Companion extends Phaser.GameObjects.Container {
       }
     }
 
-    this.x = lerp(this.x, delayedX + this.side * SIDE_OFFSET, 0.06);
+    // While inviting, the crane drifts closer and holds — waiting on you.
+    // Otherwise it flies your path a moment behind, as usual.
+    const sideOffset = this._inviting ? SIDE_OFFSET * 0.65 : SIDE_OFFSET;
+    const followX = this._inviting ? this.airplane.x : delayedX;
+    this.x = lerp(this.x, followX + this.side * sideOffset, this._inviting ? 0.10 : 0.06);
     // A loop tween drives y directly; don't fight it mid-trick
     if (!this._rolling) {
       this.y = lerp(this.y, this.airplane.y + Y_OFFSET, 0.05);
@@ -164,6 +166,39 @@ export default class Companion extends Phaser.GameObjects.Container {
     const bank = this.airplane.driftDirection * 14;
     this._baseAngle = lerp(this._baseAngle ?? 0, bank, 0.08);
     this.setAngle(this._baseAngle + this._rollOffset);
+  }
+
+  /**
+   * Demonstrate this visit's trick, then hold an expectant pause —
+   * drifting closer and waiting — so the demo reads as "your turn".
+   * The scene listens for 'companion-demo' to render the gesture cue.
+   * @private
+   */
+  _demonstrate() {
+    if (this._rolling || this._departing || !this.active) return;
+    const trick = this.visitIndex >= 1 ? 'loop' : 'roll';
+    if (trick === 'loop') {
+      this._doLoop();
+    } else {
+      this._doRoll();
+    }
+
+    // Once the trick lands, turn to the player and wait
+    this.scene.time.delayedCall(trick === 'loop' ? 900 : 700, () => {
+      if (!this.active || this._departing) return;
+      this._inviting = true;
+      this.scene.events.emit('companion-demo', trick);
+      this.scene.time.delayedCall(TRICKS.INVITE_PAUSE_MS, () => {
+        this._inviting = false;
+      });
+    });
+  }
+
+  /**
+   * End the expectant pause early — the player took the invitation.
+   */
+  endInvite() {
+    this._inviting = false;
   }
 
   /**
@@ -208,7 +243,6 @@ export default class Companion extends Phaser.GameObjects.Container {
       onComplete: () => {
         this._rollOffset = 0;
         this._rolling = false;
-        this.scene.events.emit('companion-loop');
       },
     });
   }
@@ -250,6 +284,7 @@ export default class Companion extends Phaser.GameObjects.Container {
   depart(onGone) {
     if (this._departing) return;
     this._departing = true;
+    this._inviting = false;
     this._rollTimer?.remove();
 
     const exitX = this.side > 0 ? GAME.WIDTH + 80 : -80;
