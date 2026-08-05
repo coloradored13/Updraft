@@ -252,7 +252,7 @@ export default class AudioManager {
 
     const melody = ['C4', 'E4', 'G4', 'A4', 'E4', 'G4', 'C5', 'G4'];
     const bassNotes = ['C3', 'G2', 'A2', 'E2', 'F2', 'C3'];
-    const padChords = [['C4','E4','G4'], ['A3','C4','E4'], ['F3','A3','C4'], ['G3','B3','D4'], ['Am3','C4','E4']];
+    const padChords = [['C4','E4','G4'], ['A3','C4','E4'], ['F3','A3','C4'], ['G3','B3','D4'], ['A3','C4','E4']];
     const sparkleNotes = ['C5', 'E5', 'G5', 'A5', 'C6', 'G5', 'E5', 'A5'];
     let i = 0, bassIdx = 0, padIdx = 0, sparkIdx = 0;
 

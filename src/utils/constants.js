@@ -366,6 +366,61 @@ export const WONDER = {
   MARKER_FONT_SIZE: '15px',
 };
 
+// ── Modes ────────────────────────────────────────────────────────────────────
+
+/**
+ * Game modes. Drift is the default: no score, no obstacles, no fail state —
+ * pure glide, wonder, and play. Ascent is the opt-in competitive climb with
+ * scoring, obstacles, and real stakes.
+ */
+export const MODES = {
+  DRIFT: 'drift',
+  ASCENT: 'ascent',
+};
+
+/** Tuning specific to Drift mode. */
+export const DRIFT_TUNING = {
+  /** Miss penalty multiplier — the wind sighs, it doesn't punish */
+  MISS_PENALTY_SCALE: 0.4,
+  /** Altitudes (m) where a companion crane joins the flight */
+  COMPANION_ALTITUDES: [1600, 5600],
+  /** How long the companion stays before departing (ms) */
+  COMPANION_DURATION_MS: 26000,
+  /** Sky words: min/max altitude gap between lines (m) */
+  WORD_INTERVAL_MIN: 450,
+  WORD_INTERVAL_MAX: 850,
+  /** Altitudes (m) offering a gentle invitation to rest */
+  REST_INVITE_ALTITUDES: [5000, 8500],
+};
+
+/** Tuning specific to Ascent mode. */
+export const ASCENT_TUNING = {
+  /** Seconds pinned at minimum rise speed before the wind sets you down */
+  STALL_SECONDS: 6,
+  /** Seconds at minimum speed before the quiet warning appears */
+  STALL_WARNING_SECONDS: 3.5,
+  /** Extra px beyond hitbox that counts as a thrilling near-miss */
+  NEAR_MISS_RADIUS: 30,
+  /** Score bonus for a near-miss */
+  NEAR_MISS_BONUS: 25,
+  /** Score bonus for catching a current mid/just-after barrel roll */
+  STYLE_BONUS: 100,
+  /** Window after a roll completes in which a catch still counts as stylish (ms) */
+  STYLE_WINDOW_MS: 500,
+};
+
+/** Barrel roll trick tuning (available in both modes). */
+export const TRICKS = {
+  /** Max gap between taps to register a double-tap (ms) */
+  DOUBLE_TAP_MS: 260,
+  /** Full roll duration (ms) */
+  ROLL_DURATION_MS: 560,
+  /** Small speed boost from a roll — play should feel good, not optimal */
+  ROLL_BOOST: 15,
+  /** Cooldown between rolls (ms) */
+  ROLL_COOLDOWN_MS: 700,
+};
+
 // ── Audio ────────────────────────────────────────────────────────────────────
 
 export const AUDIO = {

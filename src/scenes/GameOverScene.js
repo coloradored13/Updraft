@@ -68,6 +68,11 @@ const PERSONALITY_LINES = {
     'Landing on your own terms. Quietly perfect.',
     'The golden light was a good place to rest.',
   ],
+  landedByWind: [
+    'The wind set you down softly. It does that.',
+    'Every climb ends somewhere. This one ended gently.',
+    'The air got thin. The landing was kind.',
+  ],
 };
 
 /**
@@ -96,6 +101,8 @@ export default class GameOverScene extends Phaser.Scene {
     const totalCatches = data?.totalCatches ?? 0;
     const totalMisses = data?.totalMisses ?? 0;
     const softClose = data?.softClose ?? false;
+    const landedByWind = data?.landedByWind ?? false;
+    const isDrift = data?.mode === 'drift';
 
     // Sky journey gradient background
     const bg = this.add.graphics();
@@ -127,7 +134,9 @@ export default class GameOverScene extends Phaser.Scene {
     // ── Pacing: 800ms silence → personality fades in → closing line → tap prompt ──
 
     // Hero text: level/phase name (always visible)
-    const heroMessage = `You reached the ${levelName}`;
+    const heroMessage = landedByWind
+      ? `The wind set you down\nin the ${levelName}`
+      : `You reached the ${levelName}`;
     const heroText = this.add.text(width / 2, height * 0.22, heroMessage, {
       fontFamily: UI.FONT_FAMILY,
       fontSize: `${UI.GAME_OVER_FONT_SIZE}px`,
@@ -147,7 +156,7 @@ export default class GameOverScene extends Phaser.Scene {
 
     // Flight personality line — the secondary hero text
     const personalityLine = this._getFlightPersonality({
-      totalCatches, totalMisses, streak, altitude, flightCount, softClose,
+      totalCatches, totalMisses, streak, altitude, flightCount, softClose, landedByWind,
     });
 
     const personalityText = this.add.text(width / 2, height * 0.34, personalityLine, {
@@ -219,9 +228,9 @@ export default class GameOverScene extends Phaser.Scene {
       });
     }
 
-    // Personal best / New high score
+    // Personal best / New high score — Ascent concepts; Drift stays quiet
     const bestY = height * 0.56;
-    if (isNewHighScore) {
+    if (isNewHighScore && !isDrift) {
       const newLabel = this.add.text(width / 2, bestY, 'A new personal best!', {
         fontFamily: UI.FONT_FAMILY,
         fontSize: '20px',
@@ -248,7 +257,7 @@ export default class GameOverScene extends Phaser.Scene {
         repeat: -1,
         ease: 'Sine.easeInOut',
       });
-    } else if (personalBest > 0) {
+    } else if (personalBest > 0 && !isDrift) {
       const bestLabel = this.add.text(width / 2, bestY, `Your best: ${personalBest}m`, {
         fontFamily: UI.FONT_FAMILY,
         fontSize: '15px',
@@ -373,7 +382,7 @@ export default class GameOverScene extends Phaser.Scene {
    * @returns {string}
    */
   _getFlightPersonality(data) {
-    const { totalCatches, totalMisses, streak, altitude, flightCount, softClose } = data;
+    const { totalCatches, totalMisses, streak, altitude, flightCount, softClose, landedByWind } = data;
     const totalGates = totalCatches + totalMisses;
     const ratio = totalGates > 0 ? totalCatches / totalGates : 0;
 
@@ -382,6 +391,11 @@ export default class GameOverScene extends Phaser.Scene {
     // Soft close — player chose to land
     if (softClose) {
       return Phaser.Math.RND.pick(PERSONALITY_LINES.softClose);
+    }
+
+    // The wind set them down — an Ascent ending, kindly framed
+    if (landedByWind) {
+      return Phaser.Math.RND.pick(PERSONALITY_LINES.landedByWind);
     }
 
     // Newcomer — first flight

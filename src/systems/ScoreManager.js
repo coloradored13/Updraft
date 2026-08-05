@@ -143,6 +143,15 @@ export default class ScoreManager {
   }
 
   /**
+   * Add a flat bonus (style catches, near-misses).
+   * @param {number} amount - Points to add
+   */
+  addBonus(amount) {
+    this._bonusScore += amount;
+    this.score = this._peakAltitudeScore + this._bonusScore;
+  }
+
+  /**
    * Register a wind current catch. Increments streak and adds bonus score.
    * @returns {{ bonusScore: number, streak: number, isMilestone: boolean, milestoneType: string|null }}
    */

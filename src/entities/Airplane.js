@@ -49,6 +49,12 @@ export default class Airplane extends Phaser.GameObjects.Container {
     /** @type {boolean} Whether currently boosted from a wind current */
     this.isBoosted = false;
 
+    /** @type {number} Extra rotation from an in-progress barrel roll (degrees) */
+    this.rollOffset = 0;
+
+    /** @type {boolean} Whether a barrel roll is in progress */
+    this.isRolling = false;
+
     // Create the airplane sprite
     this.sprite = scene.add.image(0, 0, 'airplane');
     this.add(this.sprite);
@@ -107,6 +113,33 @@ export default class Airplane extends Phaser.GameObjects.Container {
   }
 
   /**
+   * Perform a barrel roll — a full rotation layered on top of banking.
+   * Purely joyful; a tiny boost comes from the scene, not from here.
+   * @param {number} direction - Roll direction: 1 (clockwise) or -1
+   * @param {number} durationMs - Duration of the full roll
+   * @returns {boolean} Whether the roll started (false if already rolling)
+   */
+  barrelRoll(direction = 1, durationMs = 560) {
+    if (this.isRolling) return false;
+    this.isRolling = true;
+
+    this.scene.tweens.addCounter({
+      from: 0,
+      to: 360 * (direction >= 0 ? 1 : -1),
+      duration: durationMs,
+      ease: 'Sine.easeInOut',
+      onUpdate: (tween) => {
+        this.rollOffset = tween.getValue();
+      },
+      onComplete: () => {
+        this.rollOffset = 0;
+        this.isRolling = false;
+      },
+    });
+    return true;
+  }
+
+  /**
    * Main update loop. Called each frame.
    * @param {number} delta - Frame delta in ms
    * @returns {{ pixelsRisen: number }} Distance risen this frame
@@ -137,10 +170,11 @@ export default class Airplane extends Phaser.GameObjects.Container {
       this.x = -margin;
     }
 
-    // Banking visual — base angle -90 so nose points UP, bank left/right from vertical
+    // Banking visual — base angle -90 so nose points UP, bank left/right from vertical.
+    // A barrel roll's rotation rides on top of the banking angle.
     const targetAngle = -90 + this.driftDirection * AIRPLANE.BANKING_ANGLE;
     this.currentBankAngle = lerp(this.currentBankAngle, targetAngle, AIRPLANE.BANKING_LERP);
-    this.sprite.setAngle(this.currentBankAngle);
+    this.sprite.setAngle(this.currentBankAngle + this.rollOffset);
     this.sprite.x = 0;
 
     return { pixelsRisen };
