@@ -140,6 +140,41 @@ export default class Airplane extends Phaser.GameObjects.Container {
   }
 
   /**
+   * Loop-the-loop: the sprite traces a small local circle while spinning
+   * a full rotation. The container's physics are untouched, so a loop
+   * never changes your course — like the roll, it's pure play.
+   * @param {number} durationMs - Duration of the full loop
+   * @param {number} radius - Radius of the traced circle in px
+   * @returns {boolean} Whether the loop started (false if mid-trick)
+   */
+  loopTheLoop(durationMs = 760, radius = 20) {
+    if (this.isRolling) return false;
+    this.isRolling = true;
+
+    this.scene.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: durationMs,
+      ease: 'Sine.easeInOut',
+      onUpdate: (tween) => {
+        const t = tween.getValue();
+        const theta = t * Math.PI * 2;
+        // Trace a circle: up and over, like a loop seen from the side
+        this.sprite.x = Math.sin(theta) * radius;
+        this.sprite.y = -(1 - Math.cos(theta)) * radius * 0.5;
+        this.rollOffset = t * 360;
+      },
+      onComplete: () => {
+        this.sprite.x = 0;
+        this.sprite.y = 0;
+        this.rollOffset = 0;
+        this.isRolling = false;
+      },
+    });
+    return true;
+  }
+
+  /**
    * Main update loop. Called each frame.
    * @param {number} delta - Frame delta in ms
    * @returns {{ pixelsRisen: number }} Distance risen this frame
@@ -175,7 +210,11 @@ export default class Airplane extends Phaser.GameObjects.Container {
     const targetAngle = -90 + this.driftDirection * AIRPLANE.BANKING_ANGLE;
     this.currentBankAngle = lerp(this.currentBankAngle, targetAngle, AIRPLANE.BANKING_LERP);
     this.sprite.setAngle(this.currentBankAngle + this.rollOffset);
-    this.sprite.x = 0;
+    // A loop tween drives the sprite's local position; leave it alone mid-trick
+    if (!this.isRolling) {
+      this.sprite.x = 0;
+      this.sprite.y = 0;
+    }
 
     return { pixelsRisen };
   }

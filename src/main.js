@@ -42,6 +42,9 @@ const config = {
 
 const game = new Phaser.Game(config);
 
+// Debug/testing handle
+window.__updraft = game;
+
 // Initialize Capacitor mobile plugins (no-op on web)
 initMobilePlugins(game);
 

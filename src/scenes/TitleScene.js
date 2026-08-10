@@ -144,8 +144,25 @@ export default class TitleScene extends Phaser.Scene {
     this._createModeChip(MODES.ASCENT, 'Ascent', 'chase the height', width / 2 + 78, chipY);
     this._refreshModeChips();
 
+    // One-breath link: a quiet alternative under the chips — not a mode,
+    // an intent. Tapping it starts a ~3-minute flight immediately.
+    this._breathText = this.add.text(
+      width / 2, height * 0.745,
+      'or just one breath — a three-minute flight', {
+        fontFamily: UI.FONT_FAMILY,
+        fontSize: '13px',
+        color: UI.COLORS.TEXT_PRIMARY,
+        fontStyle: 'italic',
+      }
+    ).setOrigin(0.5).setAlpha(0.55)
+      .setInteractive({ useHandCursor: true });
+
+    this._breathText.on('pointerdown', () => {
+      this._startFlight({ mode: MODES.DRIFT, breath: true });
+    });
+
     // Tap to start - pulsing
-    const startText = this.add.text(width / 2, height * 0.79, 'Tap to Start', {
+    const startText = this.add.text(width / 2, height * 0.81, 'Tap to Start', {
       fontFamily: UI.FONT_FAMILY,
       fontSize: '22px',
       color: UI.COLORS.TEXT_PRIMARY,
@@ -165,31 +182,42 @@ export default class TitleScene extends Phaser.Scene {
       this.game._audioManager.playTitleAmbient();
     }
 
-    // Tap anywhere (except a mode chip) to start. Chip taps only select.
+    // Tap anywhere (except a mode chip or the breath link) to start.
     this._starting = false;
-    this.input.on('pointerdown', async (pointer) => {
-      if (this._starting) return;
+    this.input.on('pointerdown', (pointer) => {
       if (this._pointerOnChip(pointer)) return;
-      this._starting = true;
+      if (this._breathText.getBounds().contains(pointer.x, pointer.y)) return;
+      this._startFlight({ mode: this.selectedMode });
+    });
+  }
 
-      // Initialize audio context on user gesture
-      if (!this.game._audioManager) {
-        this.game._audioManager = new AudioManager();
-      }
-      await this.game._audioManager.init();
+  /**
+   * Begin a flight: init audio on the gesture, count the flight,
+   * fade out, and hand the mode (and breath intent) to GameScene.
+   * @private
+   * @param {{ mode: string, breath?: boolean }} data
+   */
+  async _startFlight(data) {
+    if (this._starting) return;
+    this._starting = true;
 
-      // Stop title ambient before transitioning
-      if (typeof this.game._audioManager.stopTitleAmbient === 'function') {
-        this.game._audioManager.stopTitleAmbient();
-      }
+    // Initialize audio context on user gesture
+    if (!this.game._audioManager) {
+      this.game._audioManager = new AudioManager();
+    }
+    await this.game._audioManager.init();
 
-      // Increment flight counter for this new game
-      ScoreManager.incrementFlightCount();
+    // Stop title ambient before transitioning
+    if (typeof this.game._audioManager.stopTitleAmbient === 'function') {
+      this.game._audioManager.stopTitleAmbient();
+    }
 
-      this.cameras.main.fadeOut(UI.SCENE_FADE_DURATION_MS, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('GameScene', { mode: this.selectedMode });
-      });
+    // Increment flight counter for this new game
+    ScoreManager.incrementFlightCount();
+
+    this.cameras.main.fadeOut(UI.SCENE_FADE_DURATION_MS, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('GameScene', data);
     });
   }
 

@@ -12,6 +12,7 @@ import SkyBackground from '../systems/SkyBackground.js';
 import AmbientElements from '../systems/AmbientElements.js';
 import JuiceEffects from '../systems/JuiceEffects.js';
 import SkyWords from '../systems/SkyWords.js';
+import GhostPlanes from '../systems/GhostPlanes.js';
 import Companion from '../entities/Companion.js';
 import {
   GAME, AIRPLANE, WIND_CURRENT, PHYSICS, SCORING,
@@ -40,13 +41,16 @@ export default class GameScene extends Phaser.Scene {
   }
 
   /**
-   * @param {{ mode?: string }} data - Scene data; mode falls back to the saved choice
+   * @param {{ mode?: string, breath?: boolean }} data - Scene data; mode
+   *   falls back to the saved choice. `breath` marks a one-breath flight.
    */
   init(data) {
     /** @type {string} Current game mode (MODES.DRIFT | MODES.ASCENT) */
     this.mode = data?.mode || getSavedMode();
     /** @type {boolean} Convenience flag — Drift is the calm default */
     this.isDrift = this.mode !== MODES.ASCENT;
+    /** @type {boolean} One-breath flight: a ~3-minute arc with an early rest */
+    this.isBreath = this.isDrift && Boolean(data?.breath);
   }
 
   create() {
@@ -144,8 +148,36 @@ export default class GameScene extends Phaser.Scene {
     this._sessionArcTriggered = false;
     /** @type {boolean} Whether the soft close descent is in progress */
     this._softClosing = false;
-    /** @type {number} Index into DRIFT_TUNING.REST_INVITE_ALTITUDES */
+    /** @type {number} Index into the rest-invitation sequence */
     this._restInviteIdx = 0;
+    /**
+     * The rest-invitation sequence for this flight. One-breath flights get
+     * an early invitation just after the Day transition's wonder beat.
+     * @type {{alt: number, message: string, glow: string, landLabel: string}[]}
+     */
+    this._restInvites = [];
+    if (this.isDrift) {
+      if (this.isBreath) {
+        this._restInvites.push({
+          alt: DRIFT_TUNING.BREATH_INVITE_ALTITUDE,
+          message: 'That’s one breath.\nThe day can have you back.',
+          glow: '#AED6F188',
+          landLabel: 'Land softly',
+        });
+      }
+      this._restInvites.push({
+        alt: DRIFT_TUNING.REST_INVITE_ALTITUDES[0],
+        message: 'The light is turning gold.\nYou could rest here.',
+        glow: '#D4A76A88',
+        landLabel: 'Land gently',
+      });
+      this._restInvites.push({
+        alt: DRIFT_TUNING.REST_INVITE_ALTITUDES[1],
+        message: 'The stars will hold you now.\nOr carry you higher.',
+        glow: '#AABBFF66',
+        landLabel: 'Rest among them',
+      });
+    }
 
     // ── Drift: responsive sky words + companion crane ────────────────
     /** @type {SkyWords|null} */
@@ -158,8 +190,32 @@ export default class GameScene extends Phaser.Scene {
     // ── Tricks state ─────────────────────────────────────────────────
     /** @type {number} Timestamp of the last single tap (double-tap detection) */
     this._lastTapTime = 0;
-    /** @type {number} Timestamp of the last barrel roll */
+    /** @type {number} Timestamp of the last trick (roll or loop) */
     this._lastRollTime = -Infinity;
+    /** @type {{rollDone: boolean, loopDone: boolean}} Persisted trick knowledge */
+    this._tricks = this._loadTricks();
+    /** @type {number} Pointer-down y for swipe detection */
+    this._pressY = 0;
+    /** @type {number} Pointer-down time for swipe detection */
+    this._pressTime = 0;
+
+    // ── Ghost planes: record every flight; replay past ones in Drift ──
+    /** @type {GhostPlanes} */
+    this._ghosts = new GhostPlanes(this, this.airplane, (a) => this._altitudeToWorldY(a));
+    if (this.isDrift) {
+      this._ghosts.spawnReplays();
+      this.events.once('ghost-visible', () => {
+        if (this._skyWords) this._skyWords.speak('The sky remembers your last flight.');
+      });
+    }
+    // Save on shutdown so every ending — chosen, wind-set, victorious,
+    // or abandoned — leaves a trace behind.
+    this.events.once('shutdown', () => this._ghosts.saveTrace());
+
+    // The crane's demonstrations: trick → expectant pause → gesture cue
+    /** @type {number} Invitations shown during the current companion visit */
+    this._invitesThisVisit = 0;
+    this.events.on('companion-demo', (trick) => this._onCompanionDemo(trick));
 
     // ── Ascent: stall watch ──────────────────────────────────────────
     /** @type {number} Seconds spent pinned at minimum rise speed */
@@ -276,11 +332,15 @@ export default class GameScene extends Phaser.Scene {
     this._lastPhase = this.audioManager.getPhaseForAltitude(0);
 
     // ── Input ────────────────────────────────────────────────────────────
-    // Single tap: change direction. Double tap: barrel roll (the second
-    // tap re-toggles direction back, so a roll never changes your course).
-    this.input.on('pointerdown', async () => {
+    // Single tap: change direction. Double tap: barrel roll. Swipe up:
+    // loop-the-loop. Trick gestures re-toggle direction back, so no trick
+    // ever changes your course.
+    this.input.on('pointerdown', async (pointer) => {
       await this._initAudioOnGesture();
       if (this.gameOver) return;
+
+      this._pressY = pointer.y;
+      this._pressTime = this.time.now;
 
       const now = this.time.now;
       if (now - this._lastTapTime < TRICKS.DOUBLE_TAP_MS) {
@@ -299,6 +359,19 @@ export default class GameScene extends Phaser.Scene {
       );
     });
 
+    // Swipe-up detection on release → loop
+    this.input.on('pointerup', (pointer) => {
+      if (this.gameOver) return;
+      const heldMs = this.time.now - this._pressTime;
+      const dy = pointer.y - this._pressY;
+      if (heldMs < TRICKS.SWIPE_MAX_MS && dy < -TRICKS.SWIPE_MIN_DY) {
+        // The press that started this swipe toggled direction — undo it
+        this.airplane.toggleDirection();
+        this._lastTapTime = 0;
+        this._doLoop();
+      }
+    });
+
     // Keyboard controls (arrow keys for web)
     this._cursors = this.input.keyboard.createCursorKeys();
     this._leftWasDown = false;
@@ -312,7 +385,7 @@ export default class GameScene extends Phaser.Scene {
       if (!this.gameOver) this._togglePause();
     });
 
-    // Barrel roll on Space or Up (web)
+    // Barrel roll on Space or Up, loop on Down (web)
     this.input.keyboard.on('keydown-SPACE', async () => {
       await this._initAudioOnGesture();
       if (!this.gameOver) this._doBarrelRoll();
@@ -321,6 +394,180 @@ export default class GameScene extends Phaser.Scene {
       await this._initAudioOnGesture();
       if (!this.gameOver) this._doBarrelRoll();
     });
+    this.input.keyboard.on('keydown-DOWN', async () => {
+      await this._initAudioOnGesture();
+      if (!this.gameOver) this._doLoop();
+    });
+  }
+
+  /**
+   * Load persisted trick knowledge.
+   * @private
+   * @returns {{rollDone: boolean, loopDone: boolean}}
+   */
+  _loadTricks() {
+    try {
+      const raw = localStorage.getItem('updraft_tricks');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return {
+        rollDone: Boolean(parsed.rollDone),
+        loopDone: Boolean(parsed.loopDone),
+      };
+    } catch (_) {
+      return { rollDone: false, loopDone: false };
+    }
+  }
+
+  /** @private */
+  _saveTricks() {
+    try {
+      localStorage.setItem('updraft_tricks', JSON.stringify(this._tricks));
+    } catch (_) { /* localStorage might be unavailable */ }
+  }
+
+  /**
+   * The crane finished a demonstration and is holding its expectant
+   * pause. If the trick isn't learned yet, render the invitation:
+   * a line beside the crane, and the gesture itself near the plane.
+   * @private
+   * @param {'roll'|'loop'} trick
+   */
+  _onCompanionDemo(trick) {
+    if (this.gameOver) return;
+    const learned = trick === 'loop' ? this._tricks.loopDone : this._tricks.rollDone;
+    if (learned) return;
+    if (this._invitesThisVisit >= TRICKS.INVITES_PER_VISIT) return;
+    this._invitesThisVisit += 1;
+
+    const touch = this.sys.game.device.input.touch;
+    const line = trick === 'loop'
+      ? (touch ? 'swipe up — like this' : 'swipe up — or ↓')
+      : (touch ? 'tap twice — like this' : 'double-tap — or space');
+
+    // The line belongs to the crane: it floats just above it and follows
+    const text = this.add.text(0, 0, line, {
+      fontFamily: UI.FONT_FAMILY,
+      fontSize: '14px',
+      color: UI.COLORS.TEXT_PRIMARY,
+      fontStyle: 'italic',
+      shadow: { offsetX: 1, offsetY: 1, color: '#00000055', blur: 2, fill: true },
+    }).setOrigin(0.5).setDepth(101).setAlpha(0);
+
+    const follow = this.time.addEvent({
+      delay: 33,
+      loop: true,
+      callback: () => {
+        if (!this._companion || !this._companion.active || !text.active) return;
+        const x = clamp(this._companion.x, 70, GAME.WIDTH - 70);
+        text.setPosition(x, this._companion.y - 36);
+      },
+    });
+
+    this.tweens.add({ targets: text, alpha: 0.85, duration: 500 });
+    this.tweens.add({
+      targets: text,
+      alpha: 0,
+      delay: TRICKS.INVITE_PAUSE_MS - 600,
+      duration: 600,
+      onComplete: () => {
+        follow.remove();
+        text.destroy();
+      },
+    });
+
+    // And the gesture itself, shown where the player's attention lives
+    if (trick === 'roll') {
+      this._showTapRipples();
+    } else {
+      this._showSwipeArrow();
+    }
+  }
+
+  /**
+   * Gesture cue for the roll: two double-tap ripple pairs beside the plane.
+   * @private
+   */
+  _showTapRipples() {
+    const side = this.airplane.x > GAME.WIDTH / 2 ? -46 : 46;
+    const ripple = (delay) => this.time.delayedCall(delay, () => {
+      if (this.gameOver) return;
+      const g = this.add.graphics().setDepth(96);
+      g.setPosition(this.airplane.x + side, this.airplane.y - 6);
+      g.lineStyle(2, 0xFFFFFF, 0.5);
+      g.strokeCircle(0, 0, 9);
+      this.tweens.add({
+        targets: g,
+        alpha: 0,
+        scaleX: 2.2,
+        scaleY: 2.2,
+        duration: 420,
+        ease: 'Sine.easeOut',
+        onComplete: () => g.destroy(),
+      });
+    });
+    // Two taps, a beat, two taps — the rhythm of the gesture itself
+    ripple(0); ripple(250);
+    ripple(1300); ripple(1550);
+  }
+
+  /**
+   * Gesture cue for the loop: wind motes rising along the swipe path.
+   * @private
+   */
+  _showSwipeArrow() {
+    if (!this.textures.exists('trail_particle')) return;
+    const side = this.airplane.x > GAME.WIDTH / 2 ? -46 : 46;
+
+    const wave = (baseDelay) => {
+      for (let i = 0; i < 6; i++) {
+        this.time.delayedCall(baseDelay + i * 90, () => {
+          if (this.gameOver) return;
+          const x = this.airplane.x + side;
+          const startY = this.airplane.y + 24;
+          const mote = this.add.image(x, startY, 'trail_particle')
+            .setDepth(96).setAlpha(0.7).setScale(0.5).setBlendMode('ADD');
+          this.tweens.add({
+            targets: mote,
+            y: startY - 72,
+            alpha: 0,
+            scale: 0.15,
+            duration: 620,
+            ease: 'Sine.easeOut',
+            onComplete: () => mote.destroy(),
+          });
+        });
+      }
+    };
+    wave(0);
+    wave(1500);
+  }
+
+  /**
+   * Loop-the-loop: the crane's trick. Bigger flourish and lift than the
+   * roll; the first successful loop earns a celebration from the teacher.
+   * @private
+   */
+  _doLoop() {
+    const now = this.time.now;
+    if (now - this._lastRollTime < TRICKS.ROLL_COOLDOWN_MS) return;
+    if (!this.airplane.loopTheLoop(TRICKS.LOOP_DURATION_MS, TRICKS.LOOP_RADIUS)) return;
+
+    this._lastRollTime = now;
+    this.audioManager.playSFX('streakSmall');
+    this.juice.rollFlourish(this.airplane);
+    this.airplane.applyBoost(TRICKS.LOOP_BOOST, 350);
+
+    if (!this._tricks.loopDone) {
+      this._tricks.loopDone = true;
+      this._saveTricks();
+      if (this._companion && this._companion.active) {
+        this._companion.endInvite();
+        this._companion.celebrateLoop();
+      }
+      if (this._skyWords) this._skyWords.speak('You learned that from a friend.');
+    } else if (this._companion && this._companion.active) {
+      this._companion.respondRoll();
+    }
   }
 
   /**
@@ -339,8 +586,17 @@ export default class GameScene extends Phaser.Scene {
     this.juice.rollFlourish(this.airplane);
     this.airplane.applyBoost(TRICKS.ROLL_BOOST, 300);
 
-    // The companion answers a beat later — call and response
-    if (this._companion && this._companion.active) {
+    if (!this._tricks.rollDone) {
+      // First roll ever — the lesson landed
+      this._tricks.rollDone = true;
+      this._saveTricks();
+      if (this._companion && this._companion.active) {
+        this._companion.endInvite();
+        this._companion.respondRoll();
+        if (this._skyWords) this._skyWords.speak('Now you’re flying together.');
+      }
+    } else if (this._companion && this._companion.active) {
+      // The companion answers a beat later — call and response
       this._companion.respondRoll();
     }
   }
@@ -381,8 +637,10 @@ export default class GameScene extends Phaser.Scene {
     const triggerAlt = DRIFT_TUNING.COMPANION_ALTITUDES[this._companionIdx];
     if (this.altitudeMeters < triggerAlt) return;
 
+    const visitIndex = this._companionIdx;
     this._companionIdx += 1;
-    this._companion = new Companion(this, this.airplane, Math.random() > 0.5);
+    this._invitesThisVisit = 0;
+    this._companion = new Companion(this, this.airplane, Math.random() > 0.5, visitIndex);
 
     // It stays a while, then spirals away
     this.time.delayedCall(DRIFT_TUNING.COMPANION_DURATION_MS, () => {
@@ -581,6 +839,7 @@ export default class GameScene extends Phaser.Scene {
     } else {
       try { this._updateDrift(delta); } catch (e) { console.warn('drift:', e.message); }
     }
+    try { this._ghosts.update(this.altitudeMeters); } catch (e) { console.warn('ghosts:', e.message); }
     try { this._cleanupEntities(); } catch (e) { console.warn('cleanup:', e.message); }
     try { this.skyBackground.update(this.altitudeMeters, time, delta); } catch (e) { console.warn('sky:', e.message); }
     try { this.ambientElements.update(this.altitudeMeters, time, delta); } catch (e) { console.warn('ambient:', e.message); }
@@ -1994,18 +2253,14 @@ export default class GameScene extends Phaser.Scene {
     // Ascent runs uninterrupted — a competitive climb doesn't ask questions.
     if (!this.isDrift) return;
     if (this._softClosing || this.gameOver) return;
-    if (this._restInviteIdx >= DRIFT_TUNING.REST_INVITE_ALTITUDES.length) return;
+    if (this._restInviteIdx >= this._restInvites.length) return;
 
-    const inviteAlt = DRIFT_TUNING.REST_INVITE_ALTITUDES[this._restInviteIdx];
-    if (this.altitudeMeters < inviteAlt) return;
+    const invite = this._restInvites[this._restInviteIdx];
+    if (this.altitudeMeters < invite.alt) return;
     this._restInviteIdx += 1;
 
-    const isGolden = this._restInviteIdx === 1;
-    const message = isGolden
-      ? 'The light is turning gold.\nYou could rest here.'
-      : 'The stars will hold you now.\nOr carry you higher.';
-    const glow = isGolden ? '#D4A76A88' : '#AABBFF66';
-    const landLabel = isGolden ? 'Land gently' : 'Rest among them';
+    const { message, glow, landLabel } = invite;
+    const inviteAlt = invite.alt;
 
     const { width, height } = this.scale;
 
